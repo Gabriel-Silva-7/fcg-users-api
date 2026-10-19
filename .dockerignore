@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!global.json
+!Directory.Build.props
+!Directory.Packages.props
+!src/
+!src/**
+**/bin/**
+**/obj/**
+**/.env
+**/.env.*
