@@ -16,6 +16,8 @@ using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
+using MassTransit;
+using Testcontainers.RabbitMq;
 
 namespace FCG.Users.Api.Tests.Authentication;
 
@@ -24,6 +26,21 @@ public sealed class AuthCollection : ICollectionFixture<AuthFixture>;
 
 public sealed class AuthFixture : IAsyncLifetime
 {
+    private readonly string _brokerPassword = Guid.NewGuid().ToString("N");
+    public RabbitMqContainer Broker { get; }
+    public AuthFixture()
+    {
+        Broker = new RabbitMqBuilder()
+            .WithImage("rabbitmq:4.3.6-management@sha256:54cb013d76cd1fd6c0a0708f34062ad61c452bb6f016b434c6c33f1a765d2b58")
+            .WithUsername("fcg_users").WithPassword(_brokerPassword)
+            .WithEnvironment("RABBITMQ_DEFAULT_VHOST", "/fcg").Build();
+    }
+    public IReadOnlyDictionary<string, string?> BrokerSettings => new Dictionary<string, string?>
+    {
+        ["RabbitMq:Host"] = Broker.Hostname, ["RabbitMq:Port"] = Broker.GetMappedPublicPort(5672).ToString(),
+        ["RabbitMq:VirtualHost"] = "/fcg", ["RabbitMq:Username"] = "fcg_users",
+        ["RabbitMq:Password"] = _brokerPassword
+    };
     private readonly PostgreSqlContainer _database = new PostgreSqlBuilder().WithImage("postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94").WithUsername("postgres").Build();
     public string KeyDirectory { get; } = Path.Combine(Path.GetTempPath(), "fcg-users-auth-" + Guid.NewGuid().ToString("N"));
     public RSA SigningKey { get; } = RSA.Create(2048);
@@ -33,8 +50,9 @@ public sealed class AuthFixture : IAsyncLifetime
         await File.WriteAllTextAsync(Path.Combine(KeyDirectory, "private.pem"), SigningKey.ExportPkcs8PrivateKeyPem());
         await File.WriteAllTextAsync(Path.Combine(KeyDirectory, "public.pem"), SigningKey.ExportSubjectPublicKeyInfoPem());
         await _database.StartAsync();
+        await Broker.StartAsync();
     }
-    public async Task<AuthFactory> CreateAsync(int permits = 1000, Action<IServiceCollection>? customize = null)
+    public async Task<AuthFactory> CreateAsync(int permits = 1000, Action<IServiceCollection>? customize = null, bool deliveryEnabled = false)
     {
         var name = "usr_" + Guid.NewGuid().ToString("N");
         await using var connection = new NpgsqlConnection(_database.GetConnectionString());
@@ -47,20 +65,22 @@ public sealed class AuthFixture : IAsyncLifetime
             await command.ExecuteNonQueryAsync();
         }
         var builder = new NpgsqlConnectionStringBuilder(_database.GetConnectionString()) { Database = name, Username = role, Password = password, IncludeErrorDetail = false, Timeout = 2, CommandTimeout = 3 };
-        return new AuthFactory(builder.ConnectionString, KeyDirectory, permits, customize);
+        return new AuthFactory(builder.ConnectionString, KeyDirectory, permits, customize, BrokerSettings, deliveryEnabled);
     }
     public Task PauseAsync() => _database.PauseAsync();
     public Task UnpauseAsync() => _database.UnpauseAsync();
     public async Task DisposeAsync()
     {
         await _database.DisposeAsync();
+        await Broker.DisposeAsync();
         SigningKey.Dispose();
         Directory.Delete(KeyDirectory, recursive: true);
     }
 }
 
 public sealed class AuthFactory(string connectionString, string keyDirectory, int permits = 1000,
-    Action<IServiceCollection>? customize = null) : WebApplicationFactory<Program>
+    Action<IServiceCollection>? customize = null, IReadOnlyDictionary<string, string?>? brokerSettings = null,
+    bool deliveryEnabled = false) : WebApplicationFactory<Program>
 {
     public string ConnectionString { get; } = connectionString;
     public MutableClock Clock { get; } = new();
@@ -80,6 +100,7 @@ public sealed class AuthFactory(string connectionString, string keyDirectory, in
             ["RateLimiting:PermitLimit"] = permits.ToString(), ["Swagger:Enabled"] = "true",
             ["Logging:LogLevel:Default"] = "Information"
         };
+        foreach (var pair in brokerSettings ?? new Dictionary<string, string?>()) settings[pair.Key] = pair.Value;
         foreach (var pair in Overrides) settings[pair.Key] = pair.Value;
         foreach (var pair in settings) builder.UseSetting(pair.Key, pair.Value);
         builder.ConfigureTestServices(services =>
@@ -88,6 +109,11 @@ public sealed class AuthFactory(string connectionString, string keyDirectory, in
             services.AddLogging(logging => logging.AddProvider(Logs));
             services.AddControllers().AddApplicationPart(typeof(AuthProbeController).Assembly);
             services.AddSingleton<IStartupFilter, TestIpFilter>();
+            if (!deliveryEnabled)
+            {
+                RegistrationOutboxTests.DisableDelivery(services);
+                services.Configure<MassTransitHostOptions>(options => options.WaitUntilStarted = true);
+            }
             customize?.Invoke(services);
         });
     }

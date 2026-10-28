@@ -1,12 +1,14 @@
 # FCG Users API
 
-Serviço de cadastro e login em .NET 10 com PostgreSQL próprio e tokens RS256.
+Serviço de cadastro e login em .NET 10 com PostgreSQL próprio, tokens RS256
+e publicação durável de `UserCreatedEvent` por RabbitMQ.
 Domain contém as regras; Application coordena cadastro/login; Infrastructure fornece
 persistência, hashing e assinatura; Api expõe HTTP, autorização e observabilidade.
 
 ## Configuração e execução
 
-Requer SDK **10.0.400** (`global.json`, sem roll-forward), PostgreSQL 16 e um par RSA
+Requer SDK **10.0.400** (`global.json`, sem roll-forward), PostgreSQL 16, RabbitMQ
+e um par RSA
 persistido de pelo menos 2048 bits. A privada deve ser PEM PKCS#8 (`PRIVATE KEY`)
 e a pública PEM SPKI (`PUBLIC KEY`), em arquivos distintos do mesmo par. O startup
 valida o par, sem gerar substitutos. Guarde as chaves fora do repositório e forneça
@@ -17,6 +19,10 @@ Configure por ambiente ou provedor externo de segredos:
 | Variável | Valor / comportamento |
 |---|---|
 | `ConnectionStrings__Default` | Conexão PostgreSQL do banco Users, obrigatória |
+| `RabbitMq__Host` | Nome/IP do broker, obrigatório, sem esquema nem credenciais na URL |
+| `RabbitMq__Port` | Porta AMQP; padrão `5672`, de 1 a 65535 |
+| `RabbitMq__VirtualHost` | `/fcg`, obrigatório conforme contrato de infraestrutura |
+| `RabbitMq__Username` / `RabbitMq__Password` | Credencial própria de Users, obrigatória e sem valor padrão |
 | `Jwt__Issuer` / `Jwt__Audience` | Emissor / público esperado, obrigatórios |
 | `Jwt__PublicKeyPath` / `Jwt__PrivateKeyPath` | Caminhos dos PEMs, obrigatórios |
 | `Jwt__Algorithm` | `RS256`: padrão e único valor aceito |
@@ -32,6 +38,9 @@ Para aplicar migrations no startup, a role precisa criar objetos nesse banco.
 Com a flag desabilitada, aplique migrations previamente; readiness falha com schema
 ausente/incompleto. A migration inicial cria `Users`, índice único de e-mail e
 constraints de papel, estado e versão lógica positiva. Não acessa outros bancos.
+A migration aditiva `RegistrationOutbox` cria as tabelas MassTransit `OutboxMessage`,
+`OutboxState` e `InboxState` (esta última é uma dependência estrutural do modelo,
+sem consumidores ou limpeza de inbox habilitados neste incremento).
 
 Com conexão e chaves configuradas no ambiente:
 
@@ -43,8 +52,8 @@ dotnet run --project src/FCG.Users.Api --no-launch-profile --urls http://localho
 ```
 
 `sh scripts/verify.sh` reúne restore locked, build e testes; aceita
-`DOTNET=/caminho/para/dotnet`. Os testes usam PostgreSQL real via Testcontainers,
-com banco/role descartáveis por cenário, e exigem Docker acessível. Se necessário,
+`DOTNET=/caminho/para/dotnet`. Os testes usam PostgreSQL e RabbitMQ reais via
+Testcontainers, com banco/role descartáveis por cenário, e exigem Docker acessível. Se necessário,
 configure `DOCKER_HOST` para o socket do seu contexto.
 
 ## Cadastro e login
@@ -74,6 +83,40 @@ inexistente/bloqueada/excluída e senha incorreta retornam o mesmo 401. Campos
 obrigatórios ausentes ou acima dos limites retornam 400. Cadastro repetido,
 inclusive com variação de caixa/espaços ou conta bloqueada/excluída, retorna 409.
 O índice único PostgreSQL também protege cadastros concorrentes.
+
+## Evento de cadastro e recuperação
+
+O **201 confirma o usuário e a intenção de `UserCreatedEvent` na mesma transação
+PostgreSQL**. A entrega acontece em background pelo Bus Outbox do MassTransit
+8.5.11, com confirmação do broker. Falha antes do commit desfaz ambos; erro ou
+duplicidade de cadastro não cria uma segunda intenção.
+
+O evento contém identificação, nome/e-mail normalizados, papel, estado e versão
+lógica inicial `1`, sem senha, hash ou JWT. `StateVersion` do domínio é mapeada
+explicitamente para `EventVersion` do contrato; não é o `xmin` do banco.
+`MessageId` é o `EventId`, `CorrelationId` é o `UserId`. O envelope MassTransit
+preserva `urn:message:FCG.Contracts:UserCreatedEvent`; seu payload usa o contrato
+canônico, com enums nomeados e UTC de seis casas decimais.
+
+O exchange é `FCG.Contracts:UserCreatedEvent`, fanout/durável. Antes de aceitar
+cadastros, a infraestrutura deve provisionar as filas duráveis independentes
+`fcg-catalog-identity` e `fcg-notifications-identity` e seus bindings conforme o
+contrato de topologia. O publicador não cria essas assinaturas: uma confirmação
+do broker, sozinha, não comprova que haja destinatários vinculados. Users usa
+credencial própria limitada ao vhost `/fcg`, sem tag administrativa.
+
+Com RabbitMQ indisponível, a API consegue iniciar e aceitar cadastro quando o
+banco está disponível; a intenção fica no banco. Depois da recuperação, inclusive
+após reiniciar a API, o entregador continua sem exigir novo POST. O intervalo
+de busca é de um segundo, sem garantia de latência durante falhas. A entrega é
+pelo menos uma vez; consumidores precisam tratar reentregas. A linha da outbox
+pode ser removida depois da entrega e não é histórico permanente.
+
+As tabelas outbox contêm contato porque fazem parte da entrega do evento: proteja
+credenciais, banco e backups. Eventos não são impressos integralmente nos logs.
+O envio simulado de boas-vindas pertence ao serviço Notifications e ainda não é
+implementado por este incremento. Seed, mudanças de estado/contato e recuperação
+por snapshots serão adicionados nos respectivos incrementos.
 
 ## Autenticação e autorização
 
@@ -112,15 +155,17 @@ confiança e o encaminhamento; headers arbitrários não determinam o IP.
 
 Logs registram rota parametrizada, status, duração, ID de usuário quando disponível
 e traceId; cadastro/login mascaram contato. Fora de Development, eventos EF que
-imprimem exceções brutas são suprimidos. Falhas inesperadas preservam tipo e traceId
+imprimem exceções brutas e logs brutos de transporte MassTransit são suprimidos.
+Readiness devolve descrições fixas, sem exceções do broker. Falhas inesperadas preservam tipo e traceId
 sem mensagem/stack trace. Não habilite logging sensível do EF nem captura de corpos
 ou de Authorization no ambiente.
 
 ## Saúde e container
 
 - `GET /health/live`: anônimo, 200 `Healthy`, sem consultar dependências.
-- `GET /health/ready`: anônimo, consulta todas as colunas mapeadas de Users; 200
-  quando saudável, 503 para banco/schema indisponível ou degraded/unhealthy.
+- `GET /health/ready`: anônimo, verifica schema Users/outbox, estado do bus e
+  conectividade/autenticação AMQP (probe com limite de dois segundos); 200
+  quando saudável, 503 para dependência/schema indisponível ou degraded/unhealthy.
 - `dotnet FCG.Users.Api.dll --healthcheck`: verifica readiness local na porta 8080,
   retorna 0/1 com timeout de três segundos, sem abrir servidor.
 
@@ -131,7 +176,7 @@ mounts somente leitura. A privada não deve entrar no contexto de build.
 
 Exemplo com arquivo de ambiente externo preenchido com as variáveis acima e paths
 internos `/run/secrets/public.pem` e `/run/secrets/private.pem`. O banco configurado
-precisa ser alcançável pelo container:
+e RabbitMQ precisam ser alcançáveis pelo container:
 
 ```sh
 docker --context orbstack build -t fcg-users-api:local .
@@ -149,5 +194,7 @@ docker --context orbstack rm -f "$container_id"
 
 A suíte cobre regras herdadas, limites HTTP, concorrência real, migrations/role,
 JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indisponibilidade
-e recuperação, privacidade em Production, Swagger, probes e camadas. Administração,
-perfil/senha, bootstrap de administrador e eventos/outbox ficam nos próximos incrementos.
+e recuperação, privacidade em Production, Swagger, probes e camadas. Também cobre
+commit/rollback real de usuário+intenção, fanout para dois assinantes, payload
+canônico e retomada após broker indisponível/reinício da API. Administração,
+perfil/senha, bootstrap de administrador e eventos de estado ficam nos próximos incrementos.

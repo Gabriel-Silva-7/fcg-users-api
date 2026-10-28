@@ -6,7 +6,8 @@ namespace FCG.Users.Application.Identity;
 public sealed class RegisterUserHandler(
     IUserRepository userRepository,
     IPasswordHasher passwordHasher,
-    IClock clock)
+    IClock clock,
+    IUserRegistrationEvents events)
 {
     public async Task<RegisterUserResult> HandleAsync(
         RegisterUserCommand command,
@@ -28,6 +29,7 @@ public sealed class RegisterUserHandler(
 
         try
         {
+            await events.PublishCreatedAsync(user, cancellationToken);
             await userRepository.SaveChangesAsync(cancellationToken);
         }
         catch (EmailAlreadyRegisteredException)

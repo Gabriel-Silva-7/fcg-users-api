@@ -7,6 +7,7 @@ using FCG.Users.Application.Identity;
 using FCG.Users.Infrastructure.Common;
 using FCG.Users.Infrastructure.Identity;
 using FCG.Users.Infrastructure.Persistence;
+using FCG.Users.Infrastructure.Messaging;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -32,6 +33,9 @@ builder.Services.AddDbContext<UsersDbContext>(options =>
     }
 });
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddUsersMessaging(builder.Configuration);
+if (!builder.Environment.IsDevelopment())
+    builder.Logging.AddFilter("MassTransit", LogLevel.None);
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();

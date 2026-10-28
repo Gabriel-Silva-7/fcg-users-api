@@ -13,7 +13,12 @@ public sealed class UserRepository(UsersDbContext db) : IUserRepository
     public void Add(User user) => db.Users.Add(user);
     public async Task SaveChangesAsync(CancellationToken cancellationToken)
     {
-        try { await db.SaveChangesAsync(cancellationToken); }
+        try
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
         catch (DbUpdateException exception) when (exception.InnerException is PostgresException
             { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: UserConfiguration.UniqueEmailIndexName })
         {

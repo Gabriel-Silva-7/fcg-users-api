@@ -48,6 +48,8 @@ public sealed class UsersStorageTests(AuthFixture fixture)
             Assert.Equal(1L, await app.ScalarAsync("SELECT count(*) FROM \"Users\""));
             Assert.Equal("race@example.com", await app.ScalarAsync("SELECT \"Email\" FROM \"Users\""));
             Assert.Equal("User", await app.ScalarAsync("SELECT \"Role\" FROM \"Users\""));
+            Assert.Equal(1L, await app.ScalarAsync("SELECT count(*) FROM \"OutboxMessage\""));
+            Assert.Equal(1L, await app.ScalarAsync("SELECT count(*) FROM \"OutboxState\""));
             var logs = string.Join('\n', app.Logs.Entries);
             Assert.DoesNotContain("race@example.com", logs, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(Password, logs);
@@ -177,7 +179,7 @@ public sealed class UsersStorageTests(AuthFixture fixture)
         Assert.Equal(originalXmin, await app.ScalarAsync("SELECT xmin::text::bigint FROM \"Users\""));
         Assert.Equal(originalHash, await app.ScalarAsync("SELECT \"PasswordHash\" FROM \"Users\""));
         var tables = Assert.IsType<string[]>(await app.ScalarAsync("SELECT array_agg(tablename::text) FROM pg_tables WHERE schemaname = 'public'"));
-        Assert.Equal(new[] { "Users", "__EFMigrationsHistory" }.Order(StringComparer.Ordinal), tables.Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "Users", "InboxState", "OutboxMessage", "OutboxState", "__EFMigrationsHistory" }.Order(StringComparer.Ordinal), tables.Order(StringComparer.Ordinal));
         Assert.Equal(0L, await app.ScalarAsync("SELECT count(*) FROM pg_constraint WHERE conrelid = '\"Users\"'::regclass AND contype = 'f'"));
         Assert.Equal(true, await app.ScalarAsync("SELECT indisunique FROM pg_index WHERE indexrelid = '\"UX_Users_Email\"'::regclass"));
         await app.ExecuteAsync("UPDATE \"Users\" SET \"PasswordHash\" = \"PasswordHash\"");

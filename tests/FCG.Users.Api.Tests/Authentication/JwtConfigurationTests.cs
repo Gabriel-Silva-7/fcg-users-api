@@ -102,7 +102,7 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
             Assert.Equal(HttpStatusCode.OK, login.StatusCode);
             token = (await login.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("accessToken").GetString()!;
         }
-        await using (var second = new AuthFactory(connectionString, fixture.KeyDirectory))
+        await using (var second = new AuthFactory(connectionString, fixture.KeyDirectory, brokerSettings: fixture.BrokerSettings))
         {
             using var client = second.CreateClient();
             client.DefaultRequestHeaders.Authorization = new("Bearer", token);
@@ -131,7 +131,7 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
             using var firstAccess = await firstClient.GetAsync("/test-auth/user");
             Assert.Equal(HttpStatusCode.OK, firstAccess.StatusCode);
 
-            await using var second = new AuthFactory(first.ConnectionString, fixture.KeyDirectory);
+            await using var second = new AuthFactory(first.ConnectionString, fixture.KeyDirectory, brokerSettings: fixture.BrokerSettings);
             using var secondClient = second.CreateClient();
             secondClient.DefaultRequestHeaders.Authorization = new("Bearer", originalToken);
             using var warmed = await secondClient.GetAsync("/test-auth/user");
