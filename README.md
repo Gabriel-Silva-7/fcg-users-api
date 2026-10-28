@@ -1,10 +1,39 @@
 # FCG Users API
 
-Base técnica em .NET 10, sem endpoints de negócio. A solução organiza os projetos Domain, Application, Infrastructure e Api. Application referencia Domain; Infrastructure referencia Application e Domain; Api referencia Application e Infrastructure. As camadas ainda não contêm regras ou classes de negócio.
+Serviço de cadastro e login em .NET 10 com PostgreSQL próprio e tokens RS256.
+Domain contém as regras; Application coordena cadastro/login; Infrastructure fornece
+persistência, hashing e assinatura; Api expõe HTTP, autorização e observabilidade.
 
-## Executar e verificar
+## Configuração e execução
 
-Requer SDK .NET 10.0.400; `global.json` desativa roll-forward. O runtime é net10.0. Nullable, implicit usings e warnings como erros são definidos em `Directory.Build.props`. As dependências de testes têm versões exatas em `Directory.Packages.props`; os lockfiles estão versionados.
+Requer SDK **10.0.400** (`global.json`, sem roll-forward), PostgreSQL 16 e um par RSA
+persistido de pelo menos 2048 bits. A privada deve ser PEM PKCS#8 (`PRIVATE KEY`)
+e a pública PEM SPKI (`PUBLIC KEY`), em arquivos distintos do mesmo par. O startup
+valida o par, sem gerar substitutos. Guarde as chaves fora do repositório e forneça
+a privada apenas ao Users; consumidores recebem somente a pública.
+
+Configure por ambiente ou provedor externo de segredos:
+
+| Variável | Valor / comportamento |
+|---|---|
+| `ConnectionStrings__Default` | Conexão PostgreSQL do banco Users, obrigatória |
+| `Jwt__Issuer` / `Jwt__Audience` | Emissor / público esperado, obrigatórios |
+| `Jwt__PublicKeyPath` / `Jwt__PrivateKeyPath` | Caminhos dos PEMs, obrigatórios |
+| `Jwt__Algorithm` | `RS256`: padrão e único valor aceito |
+| `Jwt__ExpirationMinutes` | `15`: padrão e único valor aceito |
+| `Jwt__ClockSkewSeconds` | `0`: padrão e único valor aceito |
+| `Database__MigrateOnStartup` | `true` aplica migrations antes de atender; padrão `false` |
+| `Swagger__Enabled` | `true` expõe `/swagger`; padrão `false`, inclusive em Production |
+| `RateLimiting__PermitLimit` | Padrão `10`, inteiro positivo |
+| `RateLimiting__WindowSeconds` | Padrão `60`, inteiro positivo |
+
+Use banco exclusivo e role própria sem superuser, criação de bancos ou roles.
+Para aplicar migrations no startup, a role precisa criar objetos nesse banco.
+Com a flag desabilitada, aplique migrations previamente; readiness falha com schema
+ausente/incompleto. A migration inicial cria `Users`, índice único de e-mail e
+constraints de papel, estado e versão lógica positiva. Não acessa outros bancos.
+
+Com conexão e chaves configuradas no ambiente:
 
 ```sh
 dotnet restore FCG.Users.sln --locked-mode
@@ -13,30 +42,112 @@ dotnet test FCG.Users.sln -c Release --no-restore
 dotnet run --project src/FCG.Users.Api --no-launch-profile --urls http://localhost:8080
 ```
 
-`sh scripts/verify.sh` reúne restore locked, build e testes. Para escolher outra instalação do SDK, use `DOTNET=/caminho/para/dotnet sh scripts/verify.sh`.
+`sh scripts/verify.sh` reúne restore locked, build e testes; aceita
+`DOTNET=/caminho/para/dotnet`. Os testes usam PostgreSQL real via Testcontainers,
+com banco/role descartáveis por cenário, e exigem Docker acessível. Se necessário,
+configure `DOCKER_HOST` para o socket do seu contexto.
 
-## Saúde
+## Cadastro e login
 
-- `GET /health/live`: 200 e texto `Healthy`; não executa checks de infraestrutura.
-- `GET /health/ready`: executa somente checks com tag `ready`; saudável retorna 200, degraded/unhealthy retornam 503.
+`POST /api/v1/auth/register`:
 
-Não existem banco, broker ou consumidores conectados. Readiness representa somente o bootstrap nesta etapa; os incrementos de infraestrutura acrescentarão checks reais. A suíte injeta checks por DI apenas nos testes e verifica que sua falha não afeta live.
+```json
+{"name":"Pessoa","email":"pessoa@example.com","password":"SenhaForte1!"}
+```
 
-## Container local
+Retorna **201** com `{id,name,email,role}` e `Location: /api/v1/me`, preservada do
+contrato de cadastro. A rota de perfil ainda não faz parte deste incremento.
+Cadastro público sempre atribui `User`; campos extras não concedem privilégios.
+Nome recebe trim e aceita 1–120 caracteres; e-mail recebe trim/lowercase e aceita
+até 256 caracteres conforme `MailAddress` e endereço canônico; senha aceita 8–128
+caracteres, com letra, dígito e especial que não seja whitespace, sem trim.
+A senha é persistida somente como hash ASP.NET Identity PBKDF2.
 
-O Dockerfile usa estágios separados, SDK 10.0.400 e ASP.NET 10.0.11 com digests fixos, usuário `app` (UID 1654) e porta 8080. O contexto permite apenas arquivos de build e `src`, excluindo bin/obj e arquivos de ambiente. Requer Docker; os comandos abaixo usam o contexto `orbstack` sem alterar o contexto global.
+`POST /api/v1/auth/login`:
+
+```json
+{"email":"pessoa@example.com","password":"SenhaForte1!"}
+```
+
+Retorna **200** com `{accessToken,tokenType:"Bearer",expiresIn:900}`. Conta
+inexistente/bloqueada/excluída e senha incorreta retornam o mesmo 401. Campos
+obrigatórios ausentes ou acima dos limites retornam 400. Cadastro repetido,
+inclusive com variação de caixa/espaços ou conta bloqueada/excluída, retorna 409.
+O índice único PostgreSQL também protege cadastros concorrentes.
+
+## Autenticação e autorização
+
+JWT dura 15 minutos, sem refresh ou tolerância de relógio. Exige RS256,
+issuer/audience configurados e claims `sub`, `role`, `jti`, `nbf`, `exp`; `sub` e
+`jti` são GUIDs não vazios; `role` é `User` ou `Administrator`. Não inclui contato,
+senha ou hash. Rejeita propriedades JSON duplicadas. `nbf` é inclusivo e `exp`
+exclusivo; mantenha os relógios dos hosts sincronizados.
+
+Após validar o token, políticas protegidas consultam o estado atual no banco Users.
+Conta ausente/bloqueada/excluída resulta em 401. `UserOrAdmin` exige conta ativa e
+papel conhecido no token; `AdminOnly` exige `Administrator` no token e no estado
+atual. Banco indisponível nessa consulta resulta em **503**
+`auth_state_unavailable`, com `Retry-After: 1`. Não há cache de estado da conta.
+As rotas deste incremento são públicas; controllers exclusivos dos testes exercitam
+as políticas, sem acrescentar endpoints de produto.
+
+## Erros e logs
+
+Erros HTTP usam `application/problem+json`, `type` com prefixo `urn:fcg:error:`,
+`status`, `code`, `instance` e `traceId`. Validações incluem `errors`.
+
+| Status | Código principal |
+|---|---|
+| 400 | `validation_error` |
+| 401 | `invalid_credentials` no login; `unauthenticated` na proteção |
+| 403 | `forbidden` |
+| 409 | `email_already_registered` |
+| 429 | `rate_limit_exceeded` |
+| 503 | `auth_state_unavailable` na revalidação de estado |
+| 500 | `internal_error`, inclusive falha de banco no cadastro/login |
+
+Login e cadastro têm limites separados por IP e política; health não consome esses
+limites. O IP vem da conexão. Ao adicionar proxy, configure explicitamente a
+confiança e o encaminhamento; headers arbitrários não determinam o IP.
+
+Logs registram rota parametrizada, status, duração, ID de usuário quando disponível
+e traceId; cadastro/login mascaram contato. Fora de Development, eventos EF que
+imprimem exceções brutas são suprimidos. Falhas inesperadas preservam tipo e traceId
+sem mensagem/stack trace. Não habilite logging sensível do EF nem captura de corpos
+ou de Authorization no ambiente.
+
+## Saúde e container
+
+- `GET /health/live`: anônimo, 200 `Healthy`, sem consultar dependências.
+- `GET /health/ready`: anônimo, consulta todas as colunas mapeadas de Users; 200
+  quando saudável, 503 para banco/schema indisponível ou degraded/unhealthy.
+- `dotnet FCG.Users.Api.dll --healthcheck`: verifica readiness local na porta 8080,
+  retorna 0/1 com timeout de três segundos, sem abrir servidor.
+
+O Dockerfile fixa SDK 10.0.400 e ASP.NET 10.0.11 por digest, usa build separado,
+usuário `app` (**UID 1654**) e porta 8080. O contexto exclui bin/obj e arquivos de
+ambiente. Forneça configuração e PEMs externamente, com leitura pelo UID 1654 e
+mounts somente leitura. A privada não deve entrar no contexto de build.
+
+Exemplo com arquivo de ambiente externo preenchido com as variáveis acima e paths
+internos `/run/secrets/public.pem` e `/run/secrets/private.pem`. O banco configurado
+precisa ser alcançável pelo container:
 
 ```sh
 docker --context orbstack build -t fcg-users-api:local .
-container_id=$(docker --context orbstack run -d -p 127.0.0.1::8080 fcg-users-api:local)
+container_id=$(docker --context orbstack run -d -p 127.0.0.1::8080 \
+  --env-file /caminho/externo/users.env \
+  --mount type=bind,src=/caminho/externo/public.pem,dst=/run/secrets/public.pem,readonly \
+  --mount type=bind,src=/caminho/externo/private.pem,dst=/run/secrets/private.pem,readonly \
+  fcg-users-api:local)
 docker --context orbstack port "$container_id" 8080/tcp
 docker --context orbstack inspect --format '{{.State.Health.Status}}' "$container_id"
-# Use a porta informada acima:
-curl http://127.0.0.1:PORTA/health/live
-curl http://127.0.0.1:PORTA/health/ready
+docker --context orbstack exec "$container_id" dotnet FCG.Users.Api.dll --healthcheck
+# Descarte somente o container criado acima:
 docker --context orbstack rm -f "$container_id"
 ```
 
-O health check executa `dotnet FCG.Users.Api.dll --healthcheck`: faz HTTP para o próprio `http://127.0.0.1:8080/health/ready`, retorna 0 para sucesso e 1 para falha, com timeout de três segundos. Não exige shell ou curl na imagem. A porta interna deve permanecer 8080 para corresponder ao probe; a porta publicada no host pode ser aleatória.
-
-A suíte cobre respostas de saúde, isolamento de readiness/live, probe com servidor HTTP real (200, 503, conexão recusada e timeout), modo de processo e direção das referências das camadas. A pasta `k8s` descreve o estado da implantação; não há manifestos nesta base.
+A suíte cobre regras herdadas, limites HTTP, concorrência real, migrations/role,
+JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indisponibilidade
+e recuperação, privacidade em Production, Swagger, probes e camadas. Administração,
+perfil/senha, bootstrap de administrador e eventos/outbox ficam nos próximos incrementos.
