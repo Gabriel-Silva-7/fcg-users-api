@@ -29,6 +29,9 @@ Configure por ambiente ou provedor externo de segredos:
 | `Jwt__ExpirationMinutes` | `15`: padrão e único valor aceito |
 | `Jwt__ClockSkewSeconds` | `0`: padrão e único valor aceito |
 | `Database__MigrateOnStartup` | `true` aplica migrations antes de atender; padrão `false` |
+| `AdminBootstrap__Enabled` | Padrão `false`; habilita explicitamente o seed em qualquer ambiente |
+| `AdminBootstrap__Email` / `AdminBootstrap__Password` | Credenciais do administrador, obrigatórias quando seed habilitado, sem padrão |
+| `AdminBootstrap__PlayerEmail` / `AdminBootstrap__PlayerPassword` | Credenciais do jogador de demonstração, obrigatórias quando seed habilitado, sem padrão |
 | `Swagger__Enabled` | `true` expõe `/swagger`; padrão `false`, inclusive em Production |
 | `RateLimiting__PermitLimit` | Padrão `10`, inteiro positivo |
 | `RateLimiting__WindowSeconds` | Padrão `60`, inteiro positivo |
@@ -115,8 +118,35 @@ pode ser removida depois da entrega e não é histórico permanente.
 As tabelas outbox contêm contato porque fazem parte da entrega do evento: proteja
 credenciais, banco e backups. Eventos não são impressos integralmente nos logs.
 O envio simulado de boas-vindas pertence ao serviço Notifications e ainda não é
-implementado por este incremento. Seed, mudanças de estado/contato e recuperação
-por snapshots serão adicionados nos respectivos incrementos.
+implementado por este incremento. Mudanças de estado/contato e recuperação por snapshots serão adicionadas nos respectivos incrementos.
+
+## Bootstrap explícito
+
+Com `AdminBootstrap__Enabled=true`, o startup exige os quatro valores de credenciais
+acima, fornecidos externamente (Secret ou arquivo de ambiente fora do Git).
+Não há credenciais padrão. Ambos os e-mails precisam ser válidos e distintos após
+trim/lowercase; as duas senhas seguem a política do cadastro. Com a flag desligada,
+o seed não cria contas e ignora parâmetros parciais. Funciona inclusive em Production.
+
+As migrations são aplicadas antes do bootstrap quando `Database__MigrateOnStartup`
+está habilitado; caso contrário, prepare o schema previamente. Em banco vazio,
+cria `Administrator` com papel `Administrator` e `Player` com papel `User`, ativos,
+com hash real e versão inicial 1. Contas e seus dois `UserCreatedEvent` são gravados
+na mesma transação. Réplicas concorrentes serializam o seed por lock transacional;
+o índice único continua sendo a barreira contra cadastros externos concorrentes.
+
+Em nova execução, administrador ativo já existente mantém ID, hash e estado.
+Se seu e-mail pertencer a usuário comum ou administrador bloqueado/excluído, o
+startup falha sem promover, restaurar ou criar parcialmente o lote. O jogador
+preexistente é preservado sem editar senha, papel ou estado, inclusive se inativo;
+o seed não repara dados de demonstração antigos. Mudar a senha configurada não
+redefine a conta. Logs omitem credenciais e mascaram contato; falhas de inicialização
+expõem um diagnóstico fixo e o tipo da falha, sem a exceção original.
+
+Apenas contas novas geram evento de cadastro. Repetir/reiniciar o seed não gera
+novas boas-vindas e não recompõe projeções perdidas; essa recuperação pertence aos
+snapshots explícitos de identidade. O consumidor de Notifications é validado no
+seu próprio incremento; a jornada completa entre serviços será validada na integração.
 
 ## Autenticação e autorização
 
@@ -197,4 +227,6 @@ JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indispo
 e recuperação, privacidade em Production, Swagger, probes e camadas. Também cobre
 commit/rollback real de usuário+intenção, fanout para dois assinantes, payload
 canônico e retomada após broker indisponível/reinício da API. Administração,
-perfil/senha, bootstrap de administrador e eventos de estado ficam nos próximos incrementos.
+perfil/senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
+configuração, papéis reais no login, idempotência, concorrência, colisão externa
+e rollback de contas e eventos.

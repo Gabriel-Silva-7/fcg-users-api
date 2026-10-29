@@ -13,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi;
+using Microsoft.Extensions.Options;
 
 if (args is ["--healthcheck"])
     return await ContainerProbe.RunAsync(new Uri("http://127.0.0.1:8080/health/ready"));
@@ -40,6 +41,10 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
 builder.Services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
+builder.Services.AddOptions<AdminBootstrapOptions>().Bind(builder.Configuration.GetSection(AdminBootstrapOptions.SectionName)).ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<AdminBootstrapOptions>, AdminBootstrapOptionsValidator>();
+builder.Services.AddScoped<AdminBootstrapService>();
+builder.Services.AddHostedService<AdminBootstrapHostedService>();
 builder.Services.AddScoped<RegisterUserHandler>();
 builder.Services.AddScoped<LoginUserHandler>();
 builder.Services.AddUsersAuthentication(builder.Configuration);
