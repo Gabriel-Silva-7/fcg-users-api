@@ -19,6 +19,7 @@ Configure por ambiente ou provedor externo de segredos:
 | Variável | Valor / comportamento |
 |---|---|
 | `ConnectionStrings__Default` | Conexão PostgreSQL do banco Users, obrigatória |
+| `PGGSSENCMODE` | Perfil local: `disable`, passado ao Npgsql para autenticação por senha sem dependência Kerberos; não altera `SslMode` |
 | `RabbitMq__Host` | Nome/IP do broker, obrigatório, sem esquema nem credenciais na URL |
 | `RabbitMq__Port` | Porta AMQP; padrão `5672`, de 1 a 65535 |
 | `RabbitMq__VirtualHost` | `/fcg`, obrigatório conforme contrato de infraestrutura |
@@ -384,3 +385,7 @@ a URL com a query completa. Os eventos explícitos da aplicação preservam meta
 de auditoria sem conteúdo de busca/contato. Development mantém diagnóstico local.
 
 [Manifestos Kubernetes próprios](k8s/README.md) para renderização e implantação pela orquestração.
+
+## Ambiente integrado
+
+A [orquestração](https://github.com/Gabriel-Silva-7/fcg-orchestration) prepara fontes limpas, credenciais locais, banco e broker; seus guias descrevem Compose, Kind, jornada real e recuperação. Use as revisões selecionadas da combinação, pois o README não certifica acesso público nem integração em `main`. Este repositório contém apenas o código e os dados de sua responsabilidade.
