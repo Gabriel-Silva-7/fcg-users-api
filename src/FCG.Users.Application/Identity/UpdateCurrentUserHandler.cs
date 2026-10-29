@@ -17,15 +17,7 @@ public sealed record UpdateCurrentUserResult(
     UpdateCurrentUserStatus Status,
     CurrentUser? User = null);
 
-public enum ProfileSaveStatus { Saved, NotActive, EmailAlreadyRegistered, ConcurrencyConflict }
-
-public interface IUserProfileRepository
-{
-    Task<User?> FindForUpdateAsync(Guid userId, CancellationToken cancellationToken);
-    Task<ProfileSaveStatus> SaveAsync(User user, CancellationToken cancellationToken);
-}
-
-public sealed class UpdateCurrentUserHandler(IUserProfileRepository userRepository)
+public sealed class UpdateCurrentUserHandler(IUserSelfRepository userRepository)
 {
     public async Task<UpdateCurrentUserResult> HandleAsync(
         UpdateCurrentUserCommand command,
@@ -46,13 +38,13 @@ public sealed class UpdateCurrentUserHandler(IUserProfileRepository userReposito
         user.UpdateProfile(name, email);
 
         var saved = await userRepository.SaveAsync(user, cancellationToken);
-        if (saved != ProfileSaveStatus.Saved)
+        if (saved != SelfSaveStatus.Saved)
         {
             return new(saved switch
             {
-                ProfileSaveStatus.NotActive => UpdateCurrentUserStatus.NotFound,
-                ProfileSaveStatus.EmailAlreadyRegistered => UpdateCurrentUserStatus.EmailAlreadyRegistered,
-                ProfileSaveStatus.ConcurrencyConflict => UpdateCurrentUserStatus.ConcurrencyConflict,
+                SelfSaveStatus.NotActive => UpdateCurrentUserStatus.NotFound,
+                SelfSaveStatus.EmailAlreadyRegistered => UpdateCurrentUserStatus.EmailAlreadyRegistered,
+                SelfSaveStatus.ConcurrencyConflict => UpdateCurrentUserStatus.ConcurrencyConflict,
                 _ => throw new InvalidOperationException("Unknown profile save result.")
             });
         }

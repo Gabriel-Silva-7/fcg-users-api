@@ -92,6 +92,7 @@ public sealed class User
     public void ChangePasswordHash(string passwordHash)
     {
         EnsureValidPasswordHash(passwordHash);
+        if (!IsActive || IsDeleted) throw new InvalidOperationException("Only an active account can change its password.");
         PasswordHash = passwordHash;
     }
 

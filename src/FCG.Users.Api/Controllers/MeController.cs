@@ -13,7 +13,7 @@ namespace FCG.Users.Api.Controllers;
 [ApiController]
 [Authorize(Policy = IdentityAuthorizationPolicy.UserOrAdmin)]
 [Route("api/v1/me")]
-public sealed class MeController(GetCurrentUserHandler getCurrent, UpdateCurrentUserHandler updateCurrent, ILogger<MeController> logger) : ControllerBase
+public sealed class MeController(GetCurrentUserHandler getCurrent, UpdateCurrentUserHandler updateCurrent, ChangeOwnPasswordHandler changePassword, ILogger<MeController> logger) : ControllerBase
 {
     /// <summary>Returns only the authenticated account's own profile.</summary>
     [HttpGet]
@@ -48,6 +48,31 @@ public sealed class MeController(GetCurrentUserHandler getCurrent, UpdateCurrent
             UpdateCurrentUserStatus.EmailAlreadyRegistered => ApiErrors.EmailAlreadyRegistered,
             UpdateCurrentUserStatus.ConcurrencyConflict => ApiErrors.ConcurrencyConflict,
             _ => throw new InvalidOperationException("Unknown profile operation result.")
+        };
+        return StatusCode(error.Status, error.ToProblemDetails(HttpContext.Request.Path));
+    }
+    /// <summary>Changes only the authenticated account's password; already-issued JWTs retain their existing lifetime.</summary>
+    [HttpPatch("password")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ChangePassword(ChangeOwnPasswordRequest request, CancellationToken cancellationToken)
+    {
+        var id = Guid.Parse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+        var result = await changePassword.HandleAsync(new(id, request.CurrentPassword, request.NewPassword), cancellationToken);
+        if (result.Status == ChangeOwnPasswordStatus.Updated)
+        {
+            logger.LogInformation("UserPasswordChanged {ActorUserId} {TraceId}", id, TraceIdentity.Resolve(HttpContext));
+            return NoContent();
+        }
+        var error = result.Status switch
+        {
+            ChangeOwnPasswordStatus.NotFound => ApiErrors.Unauthenticated,
+            ChangeOwnPasswordStatus.InvalidCurrentPassword => ApiErrors.InvalidCurrentPassword,
+            ChangeOwnPasswordStatus.ConcurrencyConflict => ApiErrors.ConcurrencyConflict,
+            _ => throw new InvalidOperationException("Unknown password operation result.")
         };
         return StatusCode(error.Status, error.ToProblemDetails(HttpContext.Request.Path));
     }

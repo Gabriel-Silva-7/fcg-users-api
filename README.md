@@ -161,7 +161,7 @@ Conta ausente/bloqueada/excluída resulta em 401. `UserOrAdmin` exige conta ativ
 papel conhecido no token; `AdminOnly` exige `Administrator` no token e no estado
 atual. Banco indisponível nessa consulta resulta em **503**
 `auth_state_unavailable`, com `Retry-After: 1`. Não há cache de estado da conta.
-Cadastro/login são públicos; próprio perfil usa UserOrAdmin; listagem, status e
+Cadastro/login são públicos; próprio perfil/senha usam UserOrAdmin; listagem, status e
 exclusão administrativos usam AdminOnly. Controllers exclusivos dos testes também exercitam as políticas.
 
 ## Próprio perfil
@@ -187,6 +187,32 @@ Falha antes do commit não confirma contato/versão nem log de sucesso. Logs reg
 somente identidade/traceId, sem contato completo. Publicação atômica dos snapshots
 de contato será conectada no incremento de eventos de estado; esta fatia confirma
 edição local e não promete que Notifications já conheça o contato atualizado.
+
+## Própria senha
+
+`PATCH /api/v1/me/password` recebe `{currentPassword,newPassword}` e retorna204
+sem corpo após verificar a senha atual e confirmar o hash novo. Senha atual incorreta
+dá400 `invalid_current_password`; campos ausentes, atuais acima de128 caracteres
+e nova senha fora da política dão400 `validation_error`. A nova senha tem8–128
+caracteres, letra, dígito e especial não whitespace. Senhas não recebem trim nem
+normalização; espaços fazem parte da credencial. Reutilizar a mesma senha continua
+permitido, com hash/sal novos. IDs/papéis extras não selecionam outro titular.
+
+A senha antiga deixa de autenticar quando é diferente da nova; o perfil e papel
+permanecem iguais. JWT já emitido mantém sua validade original enquanto a conta
+estiver ativa e o token não expirar. Esta operação não emite refresh ou revoga
+implicitamente todos os tokens. Somente o hash é persistido; senha/hash/token não
+são incluídos na resposta ou nos logs. A versão lógica de contato/estado não muda
+e nenhuma nova notificação/cadastro é fabricada pela troca de senha. O token opaco
+de concorrência persistido é renovado e pode tornar uma versão administrativa antiga
+obsoleta.
+
+A escrita usa o mesmo controle otimista de conta própria do perfil. Se bloqueio ou
+exclusão vencer antes da gravação, retorna401 sem alterar hash; outra edição de
+perfil/senha que vencer após a leitura causa409 `concurrency_conflict`. Não faça retry
+cego sobre esse conflito. Se a senha confirmar primeiro, uma exclusão posterior
+preserva o hash no histórico. Falha de commit não registra sucesso nem mudança
+parcial. A autorização é UserOrAdmin e inclui administrador alterando a própria senha.
 
 ## Administração e ciclo de vida
 
@@ -241,7 +267,7 @@ Erros HTTP usam `application/problem+json`, `type` com prefixo `urn:fcg:error:`,
 
 | Status | Código principal |
 |---|---|
-| 400 | `validation_error` |
+| 400 | `validation_error`, `invalid_current_password` |
 | 401 | `invalid_credentials` no login; `unauthenticated` na proteção |
 | 403 | `forbidden` |
 | 409 | `email_already_registered`, `concurrency_conflict`, `user_deleted`, `cannot_delete_self`, `cannot_deactivate_self` |
@@ -296,6 +322,6 @@ A suíte cobre regras herdadas, limites HTTP, concorrência real, migrations/rol
 JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indisponibilidade
 e recuperação, privacidade em Production, Swagger, probes e camadas. Também cobre
 commit/rollback real de usuário+intenção, fanout para dois assinantes, payload
-canônico e retomada após broker indisponível/reinício da API. Senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
+canônico e retomada após broker indisponível/reinício da API. Eventos de estado/contato e snapshots de recuperação ficam no próximo incremento. O bootstrap cobre
 configuração, papéis reais no login, idempotência, concorrência, colisão externa
 e rollback de contas e eventos.

@@ -218,7 +218,7 @@ public sealed class OwnProfileTests(AuthFixture fixture)
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
         {
-            if (Armed && command.CommandText.Contains("profile-edit-load"))
+            if (Armed && command.CommandText.Contains("self-edit-load"))
             { if (Interlocked.Increment(ref count) == readers) Entered.TrySetResult(); await Release.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken); }
             return result;
         }

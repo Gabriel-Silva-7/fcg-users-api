@@ -60,17 +60,17 @@ public sealed class UpdateCurrentUserHandlerTests
             DateTime.UnixEpoch);
 
     private sealed class FakeUserRepository(User? user, bool throwDuplicate = false)
-        : IUserProfileRepository
+        : IUserSelfRepository
     {
         public bool SaveCalled { get; private set; }
 
         public Task<User?> FindForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(user);
 
-        public Task<ProfileSaveStatus> SaveAsync(User saved, CancellationToken cancellationToken)
+        public Task<SelfSaveStatus> SaveAsync(User saved, CancellationToken cancellationToken)
         {
             SaveCalled = true;
-            return Task.FromResult(throwDuplicate ? ProfileSaveStatus.EmailAlreadyRegistered : ProfileSaveStatus.Saved);
+            return Task.FromResult(throwDuplicate ? SelfSaveStatus.EmailAlreadyRegistered : SelfSaveStatus.Saved);
         }
     }
 }

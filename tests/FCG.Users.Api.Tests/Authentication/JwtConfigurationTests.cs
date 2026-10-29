@@ -155,7 +155,7 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
     }
 
     [Fact]
-    public async Task Enabled_Swagger_documents_authentication_administration_and_profile_without_refresh_or_password_routes()
+    public async Task Enabled_Swagger_documents_authentication_administration_profile_and_password_without_refresh_routes()
     {
         await using var app = await fixture.CreateAsync();
         using var client = app.CreateClient();
@@ -178,7 +178,9 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
             Assert.False(paths.GetProperty(path).GetProperty("post").TryGetProperty("security", out _));
         foreach (var method in new[] { "get", "patch" })
             Assert.True(paths.GetProperty("/api/v1/me").GetProperty(method).GetProperty("security")[0].TryGetProperty("Bearer", out _));
-        Assert.False(paths.TryGetProperty("/api/v1/me/password", out _));
+        var password = paths.GetProperty("/api/v1/me/password").GetProperty("patch");
+        Assert.True(password.GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        foreach (var code in new[] { "204", "400", "401", "409", "503" }) Assert.True(password.GetProperty("responses").TryGetProperty(code, out _));
         using var ui = await client.GetAsync("/swagger/index.html");
         Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
     }
