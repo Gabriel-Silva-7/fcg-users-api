@@ -143,6 +143,23 @@ public sealed class AdminUserListTests(AuthFixture fixture)
         finally { barrier.Release.TrySetResult(); }
     }
 
+    [Fact]
+    public async Task Production_diagnostics_omit_literal_and_url_encoded_contact_from_search_query()
+    {
+        await using var app = await StartAsync(); using var client = await AdminAsync(app);
+        app.Logs.Entries.Clear();
+        var email = BootstrapTests.PlayerEmail;
+        const string traceId = "0123456789abcdef0123456789abcdef";
+        client.DefaultRequestHeaders.Add("traceparent", "00-" + traceId + "-0123456789abcdef-01");
+        var page = await PageAsync(client, "?search=" + Uri.EscapeDataString(email));
+        Assert.Equal(1, page.GetProperty("totalCount").GetInt32());
+        var logs = string.Join('\n', app.Logs.Entries);
+        Assert.Contains(traceId, logs);
+        Assert.Contains("HttpRequest", logs);
+        Assert.DoesNotContain(email.ToLowerInvariant(), logs.ToLowerInvariant());
+        Assert.DoesNotContain(Uri.EscapeDataString(email).ToLowerInvariant(), logs.ToLowerInvariant());
+    }
+
     private const string Endpoint = "/api/v1/admin/users";
     private async Task<AuthFactory> StartAsync(Action<IServiceCollection>? customize = null)
     { var app = await fixture.CreateAsync(customize: customize); BootstrapTests.Configure(app); return app; }

@@ -53,7 +53,12 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IdentityReconciler>();
 builder.Services.AddUsersMessaging(builder.Configuration);
 if (!builder.Environment.IsDevelopment())
+{
     builder.Logging.AddFilter("MassTransit", LogLevel.None);
+    // Framework request logs include raw query strings. Keep bounded application audit events instead.
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.None);
+    builder.Services.AddHostedService<FCG.Users.Api.Diagnostics.RequestTraceLifetime>();
+}
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();

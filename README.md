@@ -378,3 +378,7 @@ commit/rollback real de usuário+intenção, fanout para dois assinantes, payloa
 canônico e retomada após broker indisponível/reinício da API. Mudanças de estado/contato e reconciliação são cobertas pelo outbox e pelo comando descrito acima. O bootstrap cobre
 configuração, papéis reais no login, idempotência, concorrência, colisão externa
 e rollback de contas e eventos.
+
+Em Production, o logger padrão de requisições do host é desativado porque registra
+a URL com a query completa. Os eventos explícitos da aplicação preservam metadados
+de auditoria sem conteúdo de busca/contato. Development mantém diagnóstico local.
