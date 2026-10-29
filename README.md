@@ -171,10 +171,21 @@ administrativo atual no banco Users. Usuário comum recebe403; conta bloqueada o
 excluída recebe401 inclusive com token anterior. Indisponibilidade da consulta de
 estado retorna503 com `Retry-After: 1`. Nenhum endpoint promove papéis.
 
+`GET /api/v1/admin/users` retorna `{items,page,pageSize,totalCount}`. Cada item contém
+`id,name,email,role,isActive,isDeleted,createdAt,version`, sem hash, senha ou versão
+interna de evento. Contas excluídas continuam visíveis como `isDeleted=true` e
+`isActive=false`; bloqueadas têm `isDeleted=false`. O acesso é administrativo e não
+há novo filtro de estado, papel ou titular. A pesquisa opcional `search` encontra
+parte do nome/e-mail, ignora caixa e trim, aceita até256 caracteres antes do trim;
+`%`, `_` e apóstrofo são literais. `page` vai de1 a1.000.000 e `pageSize` de1 a100,
+com padrões1/20. Ordem é criação crescente e Id crescente nos empates. Página vazia
+mantém o total; contagem e itens usam um único snapshot RepeatableRead/read-only,
+sem misturar um cadastro novo entre as duas consultas. A versão pode ficar obsoleta
+após a resposta por outra escrita; releia antes de alterar status e trate409.
+
 `PATCH /api/v1/admin/users/{id}/status` recebe `{isActive,version}`. O token `version`
 é uma string opaca de concorrência (`xmin`), distinta de `StateVersion` de eventos.
-A listagem administrativa que fornece esse token será acrescentada no incremento
-seguinte; esta fatia ainda não expõe a listagem. Preserve-o como recebido, sem
+A listagem administrativa fornece esse token no campo `version`. Preserve-o como recebido, sem
 calcular o próximo. Sintaxe inválida400 antecede autobloqueio409
 `cannot_deactivate_self`; depois vêm alvo ausente404, versão obsoleta409
 `concurrency_conflict`, alvo excluído409 `user_deleted` e aplicação200. A resposta
@@ -261,6 +272,6 @@ A suíte cobre regras herdadas, limites HTTP, concorrência real, migrations/rol
 JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indisponibilidade
 e recuperação, privacidade em Production, Swagger, probes e camadas. Também cobre
 commit/rollback real de usuário+intenção, fanout para dois assinantes, payload
-canônico e retomada após broker indisponível/reinício da API. Listagem administrativa, perfil/senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
+canônico e retomada após broker indisponível/reinício da API. Perfil/senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
 configuração, papéis reais no login, idempotência, concorrência, colisão externa
 e rollback de contas e eventos.

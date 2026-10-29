@@ -47,6 +47,8 @@ builder.Services.AddSingleton<IValidateOptions<AdminBootstrapOptions>, AdminBoot
 builder.Services.AddScoped<AdminBootstrapService>();
 builder.Services.AddHostedService<AdminBootstrapHostedService>();
 builder.Services.AddScoped<IUserAdministration, UserAdministration>();
+builder.Services.AddScoped<IAdminUserReader, AdminUserReader>();
+builder.Services.AddScoped<ListUsersHandler>();
 builder.Services.AddScoped<ChangeUserStatusHandler>();
 builder.Services.AddScoped<DeleteUserHandler>();
 builder.Services.AddScoped<RegisterUserHandler>();

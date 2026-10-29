@@ -13,9 +13,22 @@ namespace FCG.Users.Api.Controllers;
 [ApiController]
 [Authorize(Policy = IdentityAuthorizationPolicy.AdminOnly)]
 [Route("api/v1/admin/users")]
-public sealed class AdminUsersController(ChangeUserStatusHandler changeStatus, DeleteUserHandler deleteUser,
+public sealed class AdminUsersController(ListUsersHandler listUsers, ChangeUserStatusHandler changeStatus, DeleteUserHandler deleteUser,
     ILogger<AdminUsersController> logger) : ControllerBase
 {
+    /// <summary>Lists all accounts, including blocked/deleted accounts, with partial name/email search and opaque versions.</summary>
+    [HttpGet]
+    [ProducesResponseType<PagedResponse<AdminUserResponse>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> List([FromQuery] ListUsersRequest request, CancellationToken cancellationToken)
+    {
+        var result = await listUsers.HandleAsync(new(request.Search, request.Page, request.PageSize), cancellationToken);
+        return Ok(new PagedResponse<AdminUserResponse>(result.Items.Select(ToResponse).ToArray(), result.Page, result.PageSize, result.TotalCount));
+    }
+
     /// <summary>Changes account status using the current opaque version; deletion is terminal.</summary>
     [HttpPatch("{id:guid}/status")]
     [ProducesResponseType<AdminUserResponse>(StatusCodes.Status200OK)]
@@ -44,7 +57,7 @@ public sealed class AdminUsersController(ChangeUserStatusHandler changeStatus, D
         var user = result.User!;
         if (user.IsActive) logger.LogInformation("UserUnblocked {ActorUserId} {TargetUserId} {TraceId}", actor, id, TraceIdentity.Resolve(HttpContext));
         else logger.LogInformation("UserBlocked {ActorUserId} {TargetUserId} {TraceId}", actor, id, TraceIdentity.Resolve(HttpContext));
-        return Ok(new AdminUserResponse(user.Id, user.Name, user.Email, user.Role.ToString(), user.IsActive, user.IsDeleted, user.CreatedAtUtc, user.Version));
+        return Ok(ToResponse(user));
     }
 
     /// <summary>Logically deletes another account, retaining identity/history and reserved email. Repetition is a no-op.</summary>
@@ -67,4 +80,6 @@ public sealed class AdminUsersController(ChangeUserStatusHandler changeStatus, D
         var error = result.Status == DeleteUserStatus.NotFound ? ApiErrors.ResourceNotFound : ApiErrors.CannotDeleteSelf;
         return StatusCode(error.Status, error.ToProblemDetails(HttpContext.Request.Path));
     }
+    private static AdminUserResponse ToResponse(AdminUserSummary user) =>
+        new(user.Id, user.Name, user.Email, user.Role.ToString(), user.IsActive, user.IsDeleted, user.CreatedAtUtc, user.Version);
 }
