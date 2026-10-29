@@ -17,7 +17,8 @@ public sealed class LoginUserHandler(
 
         if (Email.TryCreate(command.Email, out var email))
         {
-            user = await userRepository.FindByEmailAsync(email, cancellationToken);
+            try { user = await userRepository.FindByEmailAsync(email, cancellationToken); }
+            catch (IdentityStorageUnavailableException) { return LoginUserResult.StateUnavailable(); }
         }
 
         var passwordMatches = passwordHasher.Verify(user?.PasswordHash, command.Password ?? string.Empty);

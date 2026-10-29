@@ -1,7 +1,7 @@
 # FCG Users API
 
 Serviço de identidade, próprio perfil e administração em .NET 10 com PostgreSQL próprio, tokens RS256
-e publicação durável de `UserCreatedEvent` por RabbitMQ.
+e publicação durável de cadastro, mudanças e recuperação de identidade por RabbitMQ.
 Domain contém as regras; Application coordena os casos de identidade; Infrastructure fornece
 persistência, hashing e assinatura; Api expõe HTTP, autorização e observabilidade.
 
@@ -82,7 +82,9 @@ A senha é persistida somente como hash ASP.NET Identity PBKDF2.
 ```
 
 Retorna **200** com `{accessToken,tokenType:"Bearer",expiresIn:900}`. Conta
-inexistente/bloqueada/excluída e senha incorreta retornam o mesmo 401. Campos
+inexistente/bloqueada/excluída e senha incorreta retornam o mesmo401. Falha de
+disponibilidade da leitura de identidade retorna503 auth_state_unavailable com
+Retry-After1; erro inesperado continua500, sem virar credencial falsa. Campos
 obrigatórios ausentes ou acima dos limites retornam 400. Cadastro repetido,
 inclusive com variação de caixa/espaços ou conta bloqueada/excluída, retorna 409.
 O índice único PostgreSQL também protege cadastros concorrentes.
@@ -118,7 +120,7 @@ pode ser removida depois da entrega e não é histórico permanente.
 As tabelas outbox contêm contato porque fazem parte da entrega do evento: proteja
 credenciais, banco e backups. Eventos não são impressos integralmente nos logs.
 O envio simulado de boas-vindas pertence ao serviço Notifications e ainda não é
-implementado por este incremento. Mudanças de estado/contato e recuperação por snapshots serão adicionadas nos respectivos incrementos.
+implementado por este incremento. Mudanças efetivas e recuperação por snapshots usam o mesmo outbox, conforme descrito abaixo.
 
 ## Bootstrap explícito
 
@@ -147,6 +149,56 @@ Apenas contas novas geram evento de cadastro. Repetir/reiniciar o seed não gera
 novas boas-vindas e não recompõe projeções perdidas; essa recuperação pertence aos
 snapshots explícitos de identidade. O consumidor de Notifications é validado no
 seu próprio incremento; a jornada completa entre serviços será validada na integração.
+
+## Mudanças de estado e recuperação
+
+Perfil com nome/e-mail efetivamente novos, bloqueio, desbloqueio e exclusão produzem
+`UserStateChangedEvent` completo na mesma transação da alteração. A versão lógica
+confirmada, contato, papel e estado vêm da entidade daquela transação; não são
+recompostos por leituras independentes. Datas usam UTC com seis casas decimais;
+MessageId é EventId e CorrelationId é UserId. As URNs concretas são
+`urn:message:FCG.Contracts:UserStateChangedEvent` e
+`urn:message:FCG.Contracts:UserStateSnapshotEvent`, em envelopes MassTransit.
+
+Status/perfil sem mudança, exclusão repetida, senha e tentativas desfeitas não geram
+mudança fictícia. A versão HTTP xmin pode renovar sem novo snapshot. Conflito de
+concorrência/uniqueness ou rollback não deixa um evento da tentativa perdedora.
+Broker indisponível preserva a intenção no banco; o entregador a retoma, inclusive
+após reiniciar a API. As três publicações de identidade usam exchanges fanout
+`FCG.Contracts:<NomeDoEvento>` e filas independentes para Catalog/Notifications.
+A infraestrutura deve provisionar os bindings antes de liberar produtores; Users
+não assume que uma confirmação sem assinantes represente entrega aos destinatários.
+
+Para reconstruir projeções, execute explicitamente a operação do dono Users, no
+mesmo ambiente configurado do serviço. Não há endpoint HTTP novo nem consulta a
+bancos de outros serviços. Exemplos dentro do container Users em execução:
+
+```sh
+dotnet FCG.Users.Api.dll reconcile-identities --all --dry-run
+dotnet FCG.Users.Api.dll reconcile-identities --all
+dotnet FCG.Users.Api.dll reconcile-identities --user-id 11111111-1111-1111-1111-111111111111
+```
+
+Escolha `--all` ou `--user-id GUID`; nenhum deles é implícito. `--dry-run` valida a
+seleção e os payloads sem salvar ou publicar. O comando não inicia servidor, bus,
+bootstrap ou migrations, mesmo com flags de startup habilitadas. Exige schema já
+preparado; valida Users e tabelas de outbox, sem corrigir schema/dados silenciosamente.
+Não precisa que o broker esteja disponível para gravar intenções. O entregador da
+API em execução as envia depois; a saída `staged` confirma intenção, não consumo.
+
+Saída JSON tem `dryRun,selected,staged,active,blocked,deleted,notFound`, sem contato,
+hash ou credencial. Exit0 indica operação concluída;2 uso inválido;3 usuário individual
+não encontrado;1 falha segura. Comando desconhecido é rejeitado, sem iniciar API.
+A leitura usa um snapshot RepeatableRead, em páginas100, e todas as intenções são
+confirmadas no mesmo commit final. Falha posterior desfaz também os lotes já salvos.
+Os registros Users, seus xmin e StateVersion não mudam pela reconciliação.
+
+Cada evento de recuperação tem EventId novo e a versão lógica lida. Pode ficar atrás
+de uma alteração concorrente confirmada depois da leitura; consumidores mantêm a
+maior versão, sem ressuscitar exclusão. A operação pode ser repetida. Recuperação
+não publica UserCreated nem inventa boas-vindas; repetir snapshots não recompõe fatos
+ou intenções de notificações apagados. Perda dessas tabelas exige restauração/replay
+dos fatos pelo procedimento próprio, sem reset automático.
 
 ## Autenticação e autorização
 
@@ -184,9 +236,9 @@ de requisições em andamento. O cliente não envia campo version ou If-Match pa
 Mudança efetiva de nome/e-mail avança uma vez a versão lógica; no-op normalizado
 mantém essa versão e renova o token de concorrência persistido por uma escrita.
 Falha antes do commit não confirma contato/versão nem log de sucesso. Logs registram
-somente identidade/traceId, sem contato completo. Publicação atômica dos snapshots
-de contato será conectada no incremento de eventos de estado; esta fatia confirma
-edição local e não promete que Notifications já conheça o contato atualizado.
+somente identidade/traceId, sem contato completo. A alteração de contato e sua intenção de UserStateChangedEvent confirmam na mesma
+transação. A entrega e aplicação em Notifications são assíncronas; não há promessa
+de contato globalmente atual no instante da resposta HTTP.
 
 ## Própria senha
 
@@ -256,9 +308,10 @@ Cada comando lê a linha atual sob lock transacional. DELETEs concorrentes têm 
 DELETE não restaura a conta. A exclusão pode seguir status/perfil que já tenham
 confirmado antes. Respostas e logs de sucesso ocorrem depois do commit. A versão
 lógica começa1 e avança só em alteração efetiva de estado compartilhado; ela não é
-o token HTTP. Esta fatia prepara as mutações locais. A publicação atômica de eventos
-de mudança será conectada no incremento próprio antes da integração final; não
-atribua propagação de bloqueio/exclusão a este incremento.
+o token HTTP. Cada transição efetiva confirma UserStateChangedEvent na mesma transação.
+A publicação não é revogação instantânea global: Catalog/Notifications aplicam o
+estado em suas próprias projeções; a combinação com autorização distribuída é
+validada na integração específica.
 
 ## Erros e logs
 
@@ -272,8 +325,8 @@ Erros HTTP usam `application/problem+json`, `type` com prefixo `urn:fcg:error:`,
 | 403 | `forbidden` |
 | 409 | `email_already_registered`, `concurrency_conflict`, `user_deleted`, `cannot_delete_self`, `cannot_deactivate_self` |
 | 429 | `rate_limit_exceeded` |
-| 503 | `auth_state_unavailable` na revalidação de estado |
-| 500 | `internal_error`, inclusive falha de banco no cadastro/login |
+| 503 | `auth_state_unavailable` no login e revalidação de estado |
+| 500 | `internal_error` para erros inesperados, inclusive falha de banco no cadastro |
 
 Login e cadastro têm limites separados por IP e política; health não consome esses
 limites. O IP vem da conexão. Ao adicionar proxy, configure explicitamente a
@@ -322,6 +375,6 @@ A suíte cobre regras herdadas, limites HTTP, concorrência real, migrations/rol
 JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indisponibilidade
 e recuperação, privacidade em Production, Swagger, probes e camadas. Também cobre
 commit/rollback real de usuário+intenção, fanout para dois assinantes, payload
-canônico e retomada após broker indisponível/reinício da API. Eventos de estado/contato e snapshots de recuperação ficam no próximo incremento. O bootstrap cobre
+canônico e retomada após broker indisponível/reinício da API. Mudanças de estado/contato e reconciliação são cobertas pelo outbox e pelo comando descrito acima. O bootstrap cobre
 configuração, papéis reais no login, idempotência, concorrência, colisão externa
 e rollback de contas e eventos.

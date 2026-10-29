@@ -71,6 +71,7 @@ public sealed class AuthController(
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Login(
         LoginRequest request,
         CancellationToken cancellationToken)
@@ -78,6 +79,13 @@ public sealed class AuthController(
         var result = await loginUserHandler.HandleAsync(
             new LoginUserCommand(request.Email, request.Password),
             cancellationToken);
+
+        if (result.Status is LoginUserStatus.StateUnavailable)
+        {
+            Response.Headers.RetryAfter = "1";
+            logger.LogWarning("LoginStateUnavailable {TraceId}", TraceIdentity.Resolve(HttpContext));
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrors.AuthStateUnavailable.ToProblemDetails(HttpContext.Request.Path));
+        }
 
         if (result.Status is LoginUserStatus.InvalidCredentials)
         {

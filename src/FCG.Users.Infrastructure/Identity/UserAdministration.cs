@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FCG.Users.Infrastructure.Identity;
 
 /// <summary>Each command reads the current row under a transaction lock; no stale entity is saved over a concurrent edit.</summary>
-public sealed class UserAdministration(UsersDbContext db) : IUserAdministration
+public sealed class UserAdministration(UsersDbContext db, IUserIdentityEvents events) : IUserAdministration
 {
     public async Task<ChangeUserStatusResult> ChangeStatusAsync(Guid userId, bool isActive, uint expectedVersion, CancellationToken cancellationToken)
     {
@@ -19,11 +19,13 @@ public sealed class UserAdministration(UsersDbContext db) : IUserAdministration
         var entry = db.Entry(user);
         if (entry.Property<uint>("xmin").CurrentValue != expectedVersion) return new(ChangeUserStatusStatus.ConcurrencyConflict);
         if (user.IsDeleted) return new(ChangeUserStatusStatus.UserDeleted);
+        var originalVersion = user.StateVersion;
         user.ChangeActiveStatus(isActive);
         // Preserve Fase1: successful status no-op still renews the opaque HTTP concurrency token.
         entry.Property(x => x.IsActive).IsModified = true;
         try
         {
+            if (user.StateVersion != originalVersion) await events.PublishChangedAsync(user, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
@@ -43,6 +45,7 @@ public sealed class UserAdministration(UsersDbContext db) : IUserAdministration
         var user = await LockAsync(userId, cancellationToken);
         if (user is null) return new(DeleteUserStatus.NotFound);
         if (!user.SoftDelete()) return new(DeleteUserStatus.Deleted);
+        await events.PublishChangedAsync(user, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(DeleteUserStatus.Deleted, Changed: true);

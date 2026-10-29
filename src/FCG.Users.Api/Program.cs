@@ -1,3 +1,5 @@
+using System.Text.Json;
+using FCG.Users.Api.Operations;
 using FCG.Users.Api.Documentation;
 using FCG.Users.Api;
 using FCG.Users.Api.Errors;
@@ -19,7 +21,20 @@ using Microsoft.Extensions.Options;
 if (args is ["--healthcheck"])
     return await ContainerProbe.RunAsync(new Uri("http://127.0.0.1:8080/health/ready"));
 
-var builder = WebApplication.CreateBuilder(args);
+if (args.Length > 0 && !args[0].StartsWith("-", StringComparison.Ordinal) && args[0] != "reconcile-identities")
+{
+    Console.Error.WriteLine(IdentityReconciliationOptions.Usage);
+    return 2;
+}
+IdentityReconciliationOptions? reconciliation = null;
+if (args.FirstOrDefault() == "reconcile-identities"
+    && !IdentityReconciliationOptions.TryParse(args[1..], out reconciliation))
+{
+    Console.Error.WriteLine(IdentityReconciliationOptions.Usage);
+    return 2;
+}
+var builder = WebApplication.CreateBuilder(reconciliation is null ? args : []);
+if (reconciliation is not null) builder.Logging.ClearProviders();
 var connection = builder.Configuration.GetConnectionString("Default");
 if (string.IsNullOrWhiteSpace(connection)) throw new InvalidOperationException("ConnectionStrings:Default is required for Users.");
 builder.Services.AddDbContext<UsersDbContext>(options =>
@@ -35,6 +50,7 @@ builder.Services.AddDbContext<UsersDbContext>(options =>
     }
 });
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IdentityReconciler>();
 builder.Services.AddUsersMessaging(builder.Configuration);
 if (!builder.Environment.IsDevelopment())
     builder.Logging.AddFilter("MassTransit", LogLevel.None);
@@ -71,6 +87,23 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddHealthChecks().AddCheck<UsersDatabaseHealthCheck>("users-database", tags: ["ready"]);
 var app = builder.Build();
+if (reconciliation is not null)
+{
+    try
+    {
+        await using var scope = app.Services.CreateAsyncScope();
+        var report = await scope.ServiceProvider.GetRequiredService<IdentityReconciler>()
+            .ExecuteAsync(reconciliation.UserId, reconciliation.DryRun, CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(report, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        return report.NotFound ? 3 : 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine("Identity reconciliation failed: " + error.GetType().Name);
+        return 1;
+    }
+    finally { await app.DisposeAsync(); }
+}
 // Validate persisted key files before opening the listener, even without an initial login.
 _ = app.Services.GetRequiredService<JwtKeyMaterial>();
 if (builder.Configuration.GetValue<bool>("Database:MigrateOnStartup"))

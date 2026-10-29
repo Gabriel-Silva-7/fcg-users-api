@@ -29,7 +29,8 @@ public sealed class DatabaseFailureTests(AuthFixture fixture)
         {
             using var unavailableLogin = await client.PostAsJsonAsync(LoginTests.Endpoint,
                 new { email = "person@example.com", password = Password });
-            problems.Add(await AssertProblemAsync(unavailableLogin, HttpStatusCode.InternalServerError, "internal_error"));
+            problems.Add(await AssertProblemAsync(unavailableLogin, HttpStatusCode.ServiceUnavailable, "auth_state_unavailable"));
+            Assert.Equal(TimeSpan.FromSeconds(1), unavailableLogin.Headers.RetryAfter?.Delta);
             using var unavailableRegistration = await RegisterAsync(client, "outage@example.com");
             problems.Add(await AssertProblemAsync(unavailableRegistration, HttpStatusCode.InternalServerError, "internal_error"));
             client.DefaultRequestHeaders.Authorization = new("Bearer", token);

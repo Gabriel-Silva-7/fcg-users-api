@@ -8,7 +8,13 @@ namespace FCG.Users.Infrastructure.Identity;
 public sealed class UserRepository(UsersDbContext db) : IUserRepository
 {
     public Task<bool> ExistsByEmailAsync(Email email, CancellationToken cancellationToken) => db.Users.AnyAsync(x => x.Email == email, cancellationToken);
-    public Task<User?> FindByEmailAsync(Email email, CancellationToken cancellationToken) => db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
+    public async Task<User?> FindByEmailAsync(Email email, CancellationToken cancellationToken)
+    {
+        try { return await db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Email == email, cancellationToken); }
+        catch (Exception error) when (error is NpgsqlException or TimeoutException
+            or InvalidOperationException { InnerException: NpgsqlException or TimeoutException })
+        { throw new IdentityStorageUnavailableException(error); }
+    }
     public Task<User?> FindByIdAsync(Guid id, CancellationToken cancellationToken) => db.Users.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
     public void Add(User user) => db.Users.Add(user);
     public async Task SaveChangesAsync(CancellationToken cancellationToken)

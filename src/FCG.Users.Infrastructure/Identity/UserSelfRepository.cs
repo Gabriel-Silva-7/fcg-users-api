@@ -7,7 +7,7 @@ using Npgsql;
 
 namespace FCG.Users.Infrastructure.Identity;
 
-public sealed class UserSelfRepository(UsersDbContext db) : IUserSelfRepository
+public sealed class UserSelfRepository(UsersDbContext db, IUserIdentityEvents events) : IUserSelfRepository
 {
     public Task<User?> FindForUpdateAsync(Guid userId, CancellationToken cancellationToken) =>
         db.Users.TagWith("self-edit-load").SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
@@ -21,6 +21,8 @@ public sealed class UserSelfRepository(UsersDbContext db) : IUserSelfRepository
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
             // Preserve an HTTP concurrency checkpoint for no-op edits as well, without advancing snapshot version.
             db.Entry(user).Property(x => x.Name).IsModified = true;
+            if (db.Entry(user).Property(x => x.StateVersion).OriginalValue != user.StateVersion)
+                await events.PublishChangedAsync(user, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return SelfSaveStatus.Saved;

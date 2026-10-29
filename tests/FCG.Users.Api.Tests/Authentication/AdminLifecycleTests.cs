@@ -32,7 +32,7 @@ public sealed class AdminLifecycleTests(AuthFixture fixture)
         Assert.Equal(HttpStatusCode.Unauthorized, login.StatusCode);
         using var duplicate = await admin.PostAsJsonAsync("/api/v1/auth/register", new { name = "Another", email = "  BOOTSTRAP-PLAYER@EXAMPLE.COM ", password = BootstrapTests.PlayerPassword });
         await ErrorAsync(duplicate, HttpStatusCode.Conflict, "email_already_registered");
-        Assert.Equal(2L, await app.ScalarAsync("SELECT count(*) FROM \"OutboxMessage\"")); // Only the original registrations; changes are wired by USR06.
+        Assert.Equal(3L, await app.ScalarAsync("SELECT count(*) FROM \"OutboxMessage\"")); // Two registrations and the one deletion transition.
         Assert.Single(app.Logs.Entries, x => x.Contains("UserDeleted"));
     }
 

@@ -1,3 +1,4 @@
+using FCG.Contracts;
 using FCG.Users.Application.Identity;
 using FCG.Users.Infrastructure.Persistence;
 using MassTransit;
@@ -14,6 +15,8 @@ public static class UsersMessaging
         settings.Validate();
         services.AddSingleton(settings);
         services.AddScoped<IUserRegistrationEvents, UserRegistrationEvents>();
+        services.AddScoped<UserIdentitySnapshotFactory>();
+        services.AddScoped<IUserIdentityEvents, UserIdentityEvents>();
         services.AddMassTransit(bus =>
         {
             bus.ConfigureHealthCheckOptions(options =>
@@ -42,6 +45,8 @@ public static class UsersMessaging
                 rabbit.ConfigureJsonSerializerOptions(options =>
                 {
                     options.Converters.Insert(0, new UserCreatedEventJsonConverter());
+                    options.Converters.Insert(0, new IdentityEventJsonConverter<UserStateChangedEvent>());
+                    options.Converters.Insert(0, new IdentityEventJsonConverter<UserStateSnapshotEvent>());
                     return options;
                 });
             });

@@ -166,7 +166,7 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
         var registerResponses = paths.GetProperty("/api/v1/auth/register").GetProperty("post").GetProperty("responses");
         foreach (var code in new[] { "201", "400", "409", "429" }) Assert.True(registerResponses.TryGetProperty(code, out _), code);
         var loginResponses = paths.GetProperty("/api/v1/auth/login").GetProperty("post").GetProperty("responses");
-        foreach (var code in new[] { "200", "400", "401", "429" }) Assert.True(loginResponses.TryGetProperty(code, out _), code);
+        foreach (var code in new[] { "200", "400", "401", "429", "503" }) Assert.True(loginResponses.TryGetProperty(code, out _), code);
         Assert.DoesNotContain(paths.EnumerateObject(), path => path.Name.Contains("refresh", StringComparison.OrdinalIgnoreCase));
         foreach (var (path, method) in new[] { ("/api/v1/admin/users/{id}/status", "patch"), ("/api/v1/admin/users/{id}", "delete") })
         {
