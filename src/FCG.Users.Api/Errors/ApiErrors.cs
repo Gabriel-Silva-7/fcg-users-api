@@ -35,6 +35,9 @@ public static class ApiErrors
     public static readonly ApiError CannotDeleteSelf =
         new("cannot_delete_self", StatusCodes.Status409Conflict, "Cannot delete own account");
 
+    public static readonly ApiError UserDeleted =
+        new("user_deleted", StatusCodes.Status409Conflict, "User account is deleted");
+
     public static readonly ApiError AuthStateUnavailable =
         new("auth_state_unavailable", StatusCodes.Status503ServiceUnavailable, "Authentication state unavailable");
 
@@ -56,6 +59,7 @@ public static class ApiErrors
         ConcurrencyConflict,
         CannotDeactivateSelf,
         CannotDeleteSelf,
+        UserDeleted,
         AuthStateUnavailable,
         RateLimitExceeded,
         InternalError,

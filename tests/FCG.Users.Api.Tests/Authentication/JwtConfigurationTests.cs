@@ -155,7 +155,7 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
     }
 
     [Fact]
-    public async Task Enabled_Swagger_documents_authentication_in_Production_without_refresh_or_admin_product_routes()
+    public async Task Enabled_Swagger_documents_authentication_and_administration_without_refresh_or_profile_routes()
     {
         await using var app = await fixture.CreateAsync();
         using var client = app.CreateClient();
@@ -168,7 +168,14 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
         var loginResponses = paths.GetProperty("/api/v1/auth/login").GetProperty("post").GetProperty("responses");
         foreach (var code in new[] { "200", "400", "401", "429" }) Assert.True(loginResponses.TryGetProperty(code, out _), code);
         Assert.DoesNotContain(paths.EnumerateObject(), path => path.Name.Contains("refresh", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(paths.EnumerateObject(), path => path.Name.StartsWith("/api/v1/admin/", StringComparison.Ordinal));
+        foreach (var (path, method) in new[] { ("/api/v1/admin/users/{id}/status", "patch"), ("/api/v1/admin/users/{id}", "delete") })
+        {
+            var operation = paths.GetProperty(path).GetProperty(method);
+            Assert.True(operation.GetProperty("security")[0].TryGetProperty("Bearer", out _));
+            foreach (var code in new[] { "401", "403", "404", "409", "503" }) Assert.True(operation.GetProperty("responses").TryGetProperty(code, out _));
+        }
+        foreach (var path in new[] { "/api/v1/auth/register", "/api/v1/auth/login" })
+            Assert.False(paths.GetProperty(path).GetProperty("post").TryGetProperty("security", out _));
         Assert.False(paths.TryGetProperty("/api/v1/me", out _));
         using var ui = await client.GetAsync("/swagger/index.html");
         Assert.Equal(HttpStatusCode.OK, ui.StatusCode);

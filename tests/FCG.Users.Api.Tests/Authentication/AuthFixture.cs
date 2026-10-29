@@ -117,6 +117,23 @@ public sealed class AuthFactory(string connectionString, string keyDirectory, in
             customize?.Invoke(services);
         });
     }
+    protected override void Dispose(bool disposing)
+    {
+        try { base.Dispose(disposing); }
+        finally { if (disposing) ClearOwnedPool(); }
+    }
+    public override async ValueTask DisposeAsync()
+    {
+        try { await base.DisposeAsync(); }
+        finally { ClearOwnedPool(); }
+    }
+    private void ClearOwnedPool()
+    {
+        // Every fixture uses a distinct database/role/connection string. Do not retain idle connections
+        // for hundreds of disposed hosts, and do not clear pools belonging to another live fixture.
+        using var connection = new NpgsqlConnection(ConnectionString);
+        NpgsqlConnection.ClearPool(connection);
+    }
     public async Task<object?> ScalarAsync(string sql, params NpgsqlParameter[] parameters)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);

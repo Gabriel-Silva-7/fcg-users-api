@@ -57,7 +57,24 @@ public sealed class User
         DateTime createdAtUtc) =>
         Create(name, email, passwordHash, UserRole.Administrator, createdAtUtc);
 
-    public void ChangeActiveStatus(bool isActive) => IsActive = isActive;
+    public void ChangeActiveStatus(bool isActive)
+    {
+        if (IsDeleted) throw new InvalidOperationException("A deleted account cannot change status.");
+        if (IsActive == isActive) return;
+        var nextVersion = checked(StateVersion + 1);
+        IsActive = isActive;
+        StateVersion = nextVersion;
+    }
+
+    public bool SoftDelete()
+    {
+        if (IsDeleted) return false;
+        var nextVersion = checked(StateVersion + 1);
+        IsActive = false;
+        IsDeleted = true;
+        StateVersion = nextVersion;
+        return true;
+    }
 
     public void UpdateProfile(string name, Email email)
     {

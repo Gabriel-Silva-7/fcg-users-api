@@ -1,3 +1,4 @@
+using FCG.Users.Api.Documentation;
 using FCG.Users.Api;
 using FCG.Users.Api.Errors;
 using FCG.Users.Api.Logging;
@@ -45,6 +46,9 @@ builder.Services.AddOptions<AdminBootstrapOptions>().Bind(builder.Configuration.
 builder.Services.AddSingleton<IValidateOptions<AdminBootstrapOptions>, AdminBootstrapOptionsValidator>();
 builder.Services.AddScoped<AdminBootstrapService>();
 builder.Services.AddHostedService<AdminBootstrapHostedService>();
+builder.Services.AddScoped<IUserAdministration, UserAdministration>();
+builder.Services.AddScoped<ChangeUserStatusHandler>();
+builder.Services.AddScoped<DeleteUserHandler>();
 builder.Services.AddScoped<RegisterUserHandler>();
 builder.Services.AddScoped<LoginUserHandler>();
 builder.Services.AddUsersAuthentication(builder.Configuration);
@@ -55,7 +59,8 @@ builder.Services.AddApiRateLimiting(builder.Configuration);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
-    options.SwaggerDoc("v1", new OpenApiInfo { Title = "FCG Users API", Version = "v1", Description = "Public registration and authentication with RS256 access tokens." });
+    options.SwaggerDoc("v1", new OpenApiInfo { Title = "FCG Users API", Version = "v1", Description = "Registration, authentication and account administration with RS256 access tokens." });
+    options.OperationFilter<UsersSecurityOperationFilter>();
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme { Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT" });
 });
 builder.Services.AddHealthChecks().AddCheck<UsersDatabaseHealthCheck>("users-database", tags: ["ready"]);

@@ -161,8 +161,43 @@ Conta ausente/bloqueada/excluída resulta em 401. `UserOrAdmin` exige conta ativ
 papel conhecido no token; `AdminOnly` exige `Administrator` no token e no estado
 atual. Banco indisponível nessa consulta resulta em **503**
 `auth_state_unavailable`, com `Retry-After: 1`. Não há cache de estado da conta.
-As rotas deste incremento são públicas; controllers exclusivos dos testes exercitam
-as políticas, sem acrescentar endpoints de produto.
+Cadastro/login são públicos; status e exclusão administrativos usam a política
+AdminOnly. Controllers exclusivos dos testes também exercitam as políticas.
+
+## Administração e ciclo de vida
+
+As rotas administrativas exigem JWT válido com papel `Administrator` e papel
+administrativo atual no banco Users. Usuário comum recebe403; conta bloqueada ou
+excluída recebe401 inclusive com token anterior. Indisponibilidade da consulta de
+estado retorna503 com `Retry-After: 1`. Nenhum endpoint promove papéis.
+
+`PATCH /api/v1/admin/users/{id}/status` recebe `{isActive,version}`. O token `version`
+é uma string opaca de concorrência (`xmin`), distinta de `StateVersion` de eventos.
+A listagem administrativa que fornece esse token será acrescentada no incremento
+seguinte; esta fatia ainda não expõe a listagem. Preserve-o como recebido, sem
+calcular o próximo. Sintaxe inválida400 antecede autobloqueio409
+`cannot_deactivate_self`; depois vêm alvo ausente404, versão obsoleta409
+`concurrency_conflict`, alvo excluído409 `user_deleted` e aplicação200. A resposta
+preserva os campos administrativos e inclui `isDeleted`. Mesmo pedir o estado atual
+com versão correta renova o token HTTP; sem mudança real não avança a versão lógica.
+Uma versão obsoleta conflita mesmo se o estado pedido já for o atual.
+
+`DELETE /api/v1/admin/users/{id}` exclui outra conta ativa ou bloqueada logicamente,
+retornando204. Mantém ID, nome/e-mail, hash, unicidade do e-mail e históricos.
+Não equivale a anonimização e não consulta dependências em outros bancos. Não há
+restauração nesta entrega. Repetição204 não escreve novamente nem avança versão;
+inexistente404, autoexclusão409 `cannot_delete_self`. Cadastro/perfil não podem
+reutilizar e-mail da conta excluída. Desbloquear só é permitido a conta bloqueada,
+e permite reutilizar token ainda válido depois da revalidação local.
+
+Cada comando lê a linha atual sob lock transacional. DELETEs concorrentes têm uma
+única transição; PATCHs com o mesmo token têm um vencedor. PATCH que perde para
+DELETE não restaura a conta. A exclusão pode seguir status/perfil que já tenham
+confirmado antes. Respostas e logs de sucesso ocorrem depois do commit. A versão
+lógica começa1 e avança só em alteração efetiva de estado compartilhado; ela não é
+o token HTTP. Esta fatia prepara as mutações locais. A publicação atômica de eventos
+de mudança será conectada no incremento próprio antes da integração final; não
+atribua propagação de bloqueio/exclusão a este incremento.
 
 ## Erros e logs
 
@@ -174,7 +209,7 @@ Erros HTTP usam `application/problem+json`, `type` com prefixo `urn:fcg:error:`,
 | 400 | `validation_error` |
 | 401 | `invalid_credentials` no login; `unauthenticated` na proteção |
 | 403 | `forbidden` |
-| 409 | `email_already_registered` |
+| 409 | `email_already_registered`, `concurrency_conflict`, `user_deleted`, `cannot_delete_self`, `cannot_deactivate_self` |
 | 429 | `rate_limit_exceeded` |
 | 503 | `auth_state_unavailable` na revalidação de estado |
 | 500 | `internal_error`, inclusive falha de banco no cadastro/login |
@@ -226,7 +261,6 @@ A suíte cobre regras herdadas, limites HTTP, concorrência real, migrations/rol
 JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indisponibilidade
 e recuperação, privacidade em Production, Swagger, probes e camadas. Também cobre
 commit/rollback real de usuário+intenção, fanout para dois assinantes, payload
-canônico e retomada após broker indisponível/reinício da API. Administração,
-perfil/senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
+canônico e retomada após broker indisponível/reinício da API. Listagem administrativa, perfil/senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
 configuração, papéis reais no login, idempotência, concorrência, colisão externa
 e rollback de contas e eventos.
