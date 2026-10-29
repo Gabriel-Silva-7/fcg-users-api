@@ -1,8 +1,8 @@
 # FCG Users API
 
-Serviço de cadastro e login em .NET 10 com PostgreSQL próprio, tokens RS256
+Serviço de identidade, próprio perfil e administração em .NET 10 com PostgreSQL próprio, tokens RS256
 e publicação durável de `UserCreatedEvent` por RabbitMQ.
-Domain contém as regras; Application coordena cadastro/login; Infrastructure fornece
+Domain contém as regras; Application coordena os casos de identidade; Infrastructure fornece
 persistência, hashing e assinatura; Api expõe HTTP, autorização e observabilidade.
 
 ## Configuração e execução
@@ -68,7 +68,7 @@ configure `DOCKER_HOST` para o socket do seu contexto.
 ```
 
 Retorna **201** com `{id,name,email,role}` e `Location: /api/v1/me`, preservada do
-contrato de cadastro. A rota de perfil ainda não faz parte deste incremento.
+contrato de cadastro. Após login, esse endereço retorna o perfil do titular do token.
 Cadastro público sempre atribui `User`; campos extras não concedem privilégios.
 Nome recebe trim e aceita 1–120 caracteres; e-mail recebe trim/lowercase e aceita
 até 256 caracteres conforme `MailAddress` e endereço canônico; senha aceita 8–128
@@ -161,8 +161,32 @@ Conta ausente/bloqueada/excluída resulta em 401. `UserOrAdmin` exige conta ativ
 papel conhecido no token; `AdminOnly` exige `Administrator` no token e no estado
 atual. Banco indisponível nessa consulta resulta em **503**
 `auth_state_unavailable`, com `Retry-After: 1`. Não há cache de estado da conta.
-Cadastro/login são públicos; status e exclusão administrativos usam a política
-AdminOnly. Controllers exclusivos dos testes também exercitam as políticas.
+Cadastro/login são públicos; próprio perfil usa UserOrAdmin; listagem, status e
+exclusão administrativos usam AdminOnly. Controllers exclusivos dos testes também exercitam as políticas.
+
+## Próprio perfil
+
+`GET /api/v1/me` retorna `{id,name,email,role}` do `sub`, incluindo quando o titular
+é administrador. `PATCH /api/v1/me` recebe `{name,email}` e retorna os mesmos quatro
+campos. IDs em corpo/query não selecionam outro usuário; campos extras não alteram
+papel, estado ou senha. Nome/e-mail seguem as validações e normalização do cadastro.
+A senha/hash permanecem inalterados. Alterar e-mail libera o anterior; um endereço
+reservado por outra conta, inclusive bloqueada/excluída, dá409 `email_already_registered`.
+O índice único também decide disputas concorrentes, sem confirmar edição parcial.
+
+Cada edição captura a versão de concorrência no servidor ao ler o perfil e grava
+com esse checkpoint. Se outra edição ativa vencer, retorna409 `concurrency_conflict`;
+não sobrescreve cegamente a mudança alheia. Se bloqueio/exclusão vencer antes da
+escrita, retorna401 sem editar nem restaurar conta. Caso o perfil confirme primeiro,
+a exclusão posterior preserva o novo contato no histórico. Não é cancelamento global
+de requisições em andamento. O cliente não envia campo version ou If-Match para perfil.
+
+Mudança efetiva de nome/e-mail avança uma vez a versão lógica; no-op normalizado
+mantém essa versão e renova o token de concorrência persistido por uma escrita.
+Falha antes do commit não confirma contato/versão nem log de sucesso. Logs registram
+somente identidade/traceId, sem contato completo. Publicação atômica dos snapshots
+de contato será conectada no incremento de eventos de estado; esta fatia confirma
+edição local e não promete que Notifications já conheça o contato atualizado.
 
 ## Administração e ciclo de vida
 
@@ -272,6 +296,6 @@ A suíte cobre regras herdadas, limites HTTP, concorrência real, migrations/rol
 JWT/estado/papel/expiração, configuração e ciclo de vida das chaves, indisponibilidade
 e recuperação, privacidade em Production, Swagger, probes e camadas. Também cobre
 commit/rollback real de usuário+intenção, fanout para dois assinantes, payload
-canônico e retomada após broker indisponível/reinício da API. Perfil/senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
+canônico e retomada após broker indisponível/reinício da API. Senha e eventos de estado ficam nos próximos incrementos. O bootstrap cobre
 configuração, papéis reais no login, idempotência, concorrência, colisão externa
 e rollback de contas e eventos.

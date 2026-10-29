@@ -80,8 +80,13 @@ public sealed class User
     {
         ArgumentNullException.ThrowIfNull(email);
 
-        Name = NormalizeName(name);
+        if (!IsActive || IsDeleted) throw new InvalidOperationException("Only an active account can edit its profile.");
+        var normalized = NormalizeName(name);
+        var changed = Name != normalized || Email != email;
+        var nextVersion = changed ? checked(StateVersion + 1) : StateVersion;
+        Name = normalized;
         Email = email;
+        StateVersion = nextVersion;
     }
 
     public void ChangePasswordHash(string passwordHash)

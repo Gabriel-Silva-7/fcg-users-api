@@ -155,7 +155,7 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
     }
 
     [Fact]
-    public async Task Enabled_Swagger_documents_authentication_and_administration_without_refresh_or_profile_routes()
+    public async Task Enabled_Swagger_documents_authentication_administration_and_profile_without_refresh_or_password_routes()
     {
         await using var app = await fixture.CreateAsync();
         using var client = app.CreateClient();
@@ -176,7 +176,9 @@ public sealed class JwtConfigurationTests(AuthFixture fixture)
         }
         foreach (var path in new[] { "/api/v1/auth/register", "/api/v1/auth/login" })
             Assert.False(paths.GetProperty(path).GetProperty("post").TryGetProperty("security", out _));
-        Assert.False(paths.TryGetProperty("/api/v1/me", out _));
+        foreach (var method in new[] { "get", "patch" })
+            Assert.True(paths.GetProperty("/api/v1/me").GetProperty(method).GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        Assert.False(paths.TryGetProperty("/api/v1/me/password", out _));
         using var ui = await client.GetAsync("/swagger/index.html");
         Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
     }
