@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${CONFIG_NAME}
+  namespace: ${NAMESPACE}
+data:
+  ASPNETCORE_ENVIRONMENT: Production
+  PGGSSENCMODE: ${GSS_MODE}
+  Database__MigrateOnStartup: "true"
+  RabbitMq__Host: rabbitmq
+  RabbitMq__Port: "5672"
+  RabbitMq__VirtualHost: /fcg
+  Jwt__Issuer: ${JWT_ISSUER}
+  Jwt__Audience: ${JWT_AUDIENCE}
+  Jwt__Algorithm: RS256
+  Jwt__ExpirationMinutes: "15"
+  Jwt__ClockSkewSeconds: "0"
+  Jwt__PublicKeyPath: /run/secrets/public.pem
+  Swagger__Enabled: ${SWAGGER_ENABLED}
+  Jwt__PrivateKeyPath: /run/secrets/private.pem
+  AdminBootstrap__Enabled: ${BOOTSTRAP_ENABLED}
