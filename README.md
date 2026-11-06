@@ -44,7 +44,7 @@ ausente/incompleto. A migration inicial cria `Users`, índice único de e-mail e
 constraints de papel, estado e versão lógica positiva. Não acessa outros bancos.
 A migration aditiva `RegistrationOutbox` cria as tabelas MassTransit `OutboxMessage`,
 `OutboxState` e `InboxState` (esta última é uma dependência estrutural do modelo,
-sem consumidores ou limpeza de inbox habilitados neste incremento).
+sem consumidores ou limpeza de inbox habilitados neste host).
 
 Com conexão e chaves configuradas no ambiente:
 
@@ -120,8 +120,8 @@ pode ser removida depois da entrega e não é histórico permanente.
 
 As tabelas outbox contêm contato porque fazem parte da entrega do evento: proteja
 credenciais, banco e backups. Eventos não são impressos integralmente nos logs.
-O envio simulado de boas-vindas pertence ao serviço Notifications e ainda não é
-implementado por este incremento. Mudanças efetivas e recuperação por snapshots usam o mesmo outbox, conforme descrito abaixo.
+Notifications consome `UserCreatedEvent`, persiste a intenção `Welcome` e emite
+as boas-vindas simuladas no console com destinatário mascarado. Mudanças efetivas e recuperação por snapshots usam o mesmo outbox, conforme descrito abaixo.
 
 ## Bootstrap explícito
 
@@ -148,8 +148,8 @@ expõem um diagnóstico fixo e o tipo da falha, sem a exceção original.
 
 Apenas contas novas geram evento de cadastro. Repetir/reiniciar o seed não gera
 novas boas-vindas e não recompõe projeções perdidas; essa recuperação pertence aos
-snapshots explícitos de identidade. O consumidor de Notifications é validado no
-seu próprio incremento; a jornada completa entre serviços será validada na integração.
+snapshots explícitos de identidade. O consumidor de Notifications tem testes próprios; a orquestração oferece
+a jornada HTTP/eventos para verificar o fluxo completo entre os quatro serviços.
 
 ## Mudanças de estado e recuperação
 
@@ -311,8 +311,8 @@ confirmado antes. Respostas e logs de sucesso ocorrem depois do commit. A versã
 lógica começa1 e avança só em alteração efetiva de estado compartilhado; ela não é
 o token HTTP. Cada transição efetiva confirma UserStateChangedEvent na mesma transação.
 A publicação não é revogação instantânea global: Catalog/Notifications aplicam o
-estado em suas próprias projeções; a combinação com autorização distribuída é
-validada na integração específica.
+estado em suas próprias projeções. A jornada da orquestração verifica a
+propagação e a recusa de acesso depois do bloqueio ou exclusão.
 
 ## Erros e logs
 
@@ -388,7 +388,7 @@ de auditoria sem conteúdo de busca/contato. Development mantém diagnóstico lo
 
 ## Ambiente integrado
 
-A [orquestração](https://github.com/Gabriel-Silva-7/fcg-orchestration) prepara fontes limpas, credenciais locais, banco e broker; seus guias descrevem Compose, Kind, jornada real e recuperação. Use as revisões selecionadas da combinação, pois o README não certifica acesso público nem integração em `main`. Este repositório contém apenas o código e os dados de sua responsabilidade.
+A [orquestração](https://github.com/Gabriel-Silva-7/fcg-orchestration) prepara fontes limpas, credenciais locais, banco e broker; seus guias descrevem Compose, Kind, jornada real e recuperação. Use os cinco SHAs registrados no ambiente para identificar a combinação executada. As URLs identificam as origens; disponibilidade remota dos commits e acesso externo exigem conferência separada. Este repositório contém apenas o código e os dados de sua responsabilidade.
 
 ## Limite de portabilidade
 
