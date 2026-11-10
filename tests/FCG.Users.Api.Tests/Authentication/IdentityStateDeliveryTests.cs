@@ -39,7 +39,7 @@ public sealed class IdentityStateDeliveryTests(AuthFixture fixture)
         public static async Task<Capture> CreateAsync(IReadOnlyDictionary<string, string?> settings)
         {
             var factory = new ConnectionFactory { HostName = settings["RabbitMq:Host"]!, Port = int.Parse(settings["RabbitMq:Port"]!), VirtualHost = settings["RabbitMq:VirtualHost"]!, UserName = settings["RabbitMq:Username"]!, Password = settings["RabbitMq:Password"]! };
-            var connection = await factory.CreateConnectionAsync(); var channel = await connection.CreateChannelAsync(); var queues = new[] { "usr06-catalog-" + Guid.NewGuid().ToString("N"), "usr06-notifications-" + Guid.NewGuid().ToString("N") };
+            var connection = await factory.CreateConnectionAsync(); var channel = await connection.CreateChannelAsync(); var queues = new[] { "identity-state-catalog-" + Guid.NewGuid().ToString("N"), "identity-state-notifications-" + Guid.NewGuid().ToString("N") };
             foreach (var type in new[] { "UserStateChangedEvent", "UserStateSnapshotEvent" }) await channel.ExchangeDeclareAsync("FCG.Contracts:" + type, "fanout", durable: true, autoDelete: false);
             foreach (var queue in queues)
             { await channel.QueueDeclareAsync(queue, durable: true, exclusive: false, autoDelete: false); foreach (var type in new[] { "UserStateChangedEvent", "UserStateSnapshotEvent" }) await channel.QueueBindAsync(queue, "FCG.Contracts:" + type, ""); }

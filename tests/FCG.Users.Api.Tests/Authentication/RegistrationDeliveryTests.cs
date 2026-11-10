@@ -120,7 +120,7 @@ public sealed class RegistrationDeliveryTests(AuthFixture fixture)
             };
             var connection = await factory.CreateConnectionAsync();
             var channel = await connection.CreateChannelAsync();
-            var queues = new[] { "usr03-catalog-" + Guid.NewGuid().ToString("N"), "usr03-notifications-" + Guid.NewGuid().ToString("N") };
+            var queues = new[] { "registration-catalog-" + Guid.NewGuid().ToString("N"), "registration-notifications-" + Guid.NewGuid().ToString("N") };
             await channel.ExchangeDeclareAsync("FCG.Contracts:UserCreatedEvent", "fanout", durable: true, autoDelete: false);
             foreach (var queue in queues)
             {
