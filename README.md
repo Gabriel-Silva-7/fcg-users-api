@@ -83,9 +83,9 @@ A senha é persistida somente como hash ASP.NET Identity PBKDF2.
 ```
 
 Retorna **200** com `{accessToken,tokenType:"Bearer",expiresIn:900}`. Conta
-inexistente/bloqueada/excluída e senha incorreta retornam o mesmo401. Falha de
-disponibilidade da leitura de identidade retorna503 auth_state_unavailable com
-Retry-After1; erro inesperado continua500, sem virar credencial falsa. Campos
+inexistente/bloqueada/excluída e senha incorreta retornam o mesmo 401. Falha de
+disponibilidade da leitura de identidade retorna 503 auth_state_unavailable com
+Retry-After1; erro inesperado continua 500, sem virar credencial falsa. Campos
 obrigatórios ausentes ou acima dos limites retornam 400. Cadastro repetido,
 inclusive com variação de caixa/espaços ou conta bloqueada/excluída, retorna 409.
 O índice único PostgreSQL também protege cadastros concorrentes.
@@ -188,9 +188,9 @@ Não precisa que o broker esteja disponível para gravar intenções. O entregad
 API em execução as envia depois; a saída `staged` confirma intenção, não consumo.
 
 Saída JSON tem `dryRun,selected,staged,active,blocked,deleted,notFound`, sem contato,
-hash ou credencial. Exit0 indica operação concluída;2 uso inválido;3 usuário individual
+hash ou credencial. Exit 0 indica operação concluída;2 uso inválido;3 usuário individual
 não encontrado;1 falha segura. Comando desconhecido é rejeitado, sem iniciar API.
-A leitura usa um snapshot RepeatableRead, em páginas100, e todas as intenções são
+A leitura usa um snapshot RepeatableRead, em páginas 100, e todas as intenções são
 confirmadas no mesmo commit final. Falha posterior desfaz também os lotes já salvos.
 Os registros Users, seus xmin e StateVersion não mudam pela reconciliação.
 
@@ -224,13 +224,13 @@ exclusão administrativos usam AdminOnly. Controllers exclusivos dos testes tamb
 campos. IDs em corpo/query não selecionam outro usuário; campos extras não alteram
 papel, estado ou senha. Nome/e-mail seguem as validações e normalização do cadastro.
 A senha/hash permanecem inalterados. Alterar e-mail libera o anterior; um endereço
-reservado por outra conta, inclusive bloqueada/excluída, dá409 `email_already_registered`.
+reservado por outra conta, inclusive bloqueada/excluída, dá 409 `email_already_registered`.
 O índice único também decide disputas concorrentes, sem confirmar edição parcial.
 
 Cada edição captura a versão de concorrência no servidor ao ler o perfil e grava
-com esse checkpoint. Se outra edição ativa vencer, retorna409 `concurrency_conflict`;
+com esse checkpoint. Se outra edição ativa vencer, retorna 409 `concurrency_conflict`;
 não sobrescreve cegamente a mudança alheia. Se bloqueio/exclusão vencer antes da
-escrita, retorna401 sem editar nem restaurar conta. Caso o perfil confirme primeiro,
+escrita, retorna 401 sem editar nem restaurar conta. Caso o perfil confirme primeiro,
 a exclusão posterior preserva o novo contato no histórico. Não é cancelamento global
 de requisições em andamento. O cliente não envia campo version ou If-Match para perfil.
 
@@ -243,10 +243,10 @@ de contato globalmente atual no instante da resposta HTTP.
 
 ## Própria senha
 
-`PATCH /api/v1/me/password` recebe `{currentPassword,newPassword}` e retorna204
+`PATCH /api/v1/me/password` recebe `{currentPassword,newPassword}` e retorna 204
 sem corpo após verificar a senha atual e confirmar o hash novo. Senha atual incorreta
-dá400 `invalid_current_password`; campos ausentes, atuais acima de128 caracteres
-e nova senha fora da política dão400 `validation_error`. A nova senha tem8–128
+dá 400 `invalid_current_password`; campos ausentes, atuais acima de 128 caracteres
+e nova senha fora da política dão 400 `validation_error`. A nova senha tem 8–128
 caracteres, letra, dígito e especial não whitespace. Senhas não recebem trim nem
 normalização; espaços fazem parte da credencial. Reutilizar a mesma senha continua
 permitido, com hash/sal novos. IDs/papéis extras não selecionam outro titular.
@@ -261,8 +261,8 @@ de concorrência persistido é renovado e pode tornar uma versão administrativa
 obsoleta.
 
 A escrita usa o mesmo controle otimista de conta própria do perfil. Se bloqueio ou
-exclusão vencer antes da gravação, retorna401 sem alterar hash; outra edição de
-perfil/senha que vencer após a leitura causa409 `concurrency_conflict`. Não faça retry
+exclusão vencer antes da gravação, retorna 401 sem alterar hash; outra edição de
+perfil/senha que vencer após a leitura causa 409 `concurrency_conflict`. Não faça retry
 cego sobre esse conflito. Se a senha confirmar primeiro, uma exclusão posterior
 preserva o hash no histórico. Falha de commit não registra sucesso nem mudança
 parcial. A autorização é UserOrAdmin e inclui administrador alterando a própria senha.
@@ -270,37 +270,37 @@ parcial. A autorização é UserOrAdmin e inclui administrador alterando a próp
 ## Administração e ciclo de vida
 
 As rotas administrativas exigem JWT válido com papel `Administrator` e papel
-administrativo atual no banco Users. Usuário comum recebe403; conta bloqueada ou
-excluída recebe401 inclusive com token anterior. Indisponibilidade da consulta de
-estado retorna503 com `Retry-After: 1`. Nenhum endpoint promove papéis.
+administrativo atual no banco Users. Usuário comum recebe 403; conta bloqueada ou
+excluída recebe 401 inclusive com token anterior. Indisponibilidade da consulta de
+estado retorna 503 com `Retry-After: 1`. Nenhum endpoint promove papéis.
 
 `GET /api/v1/admin/users` retorna `{items,page,pageSize,totalCount}`. Cada item contém
 `id,name,email,role,isActive,isDeleted,createdAt,version`, sem hash, senha ou versão
 interna de evento. Contas excluídas continuam visíveis como `isDeleted=true` e
 `isActive=false`; bloqueadas têm `isDeleted=false`. O acesso é administrativo e não
 há novo filtro de estado, papel ou titular. A pesquisa opcional `search` encontra
-parte do nome/e-mail, ignora caixa e trim, aceita até256 caracteres antes do trim;
-`%`, `_` e apóstrofo são literais. `page` vai de1 a1.000.000 e `pageSize` de1 a100,
+parte do nome/e-mail, ignora caixa e trim, aceita até 256 caracteres antes do trim;
+`%`, `_` e apóstrofo são literais. `page` vai de 1 a1.000.000 e `pageSize` de 1 a100,
 com padrões1/20. Ordem é criação crescente e Id crescente nos empates. Página vazia
 mantém o total; contagem e itens usam um único snapshot RepeatableRead/read-only,
 sem misturar um cadastro novo entre as duas consultas. A versão pode ficar obsoleta
-após a resposta por outra escrita; releia antes de alterar status e trate409.
+após a resposta por outra escrita; releia antes de alterar status e trate 409.
 
 `PATCH /api/v1/admin/users/{id}/status` recebe `{isActive,version}`. O token `version`
 é uma string opaca de concorrência (`xmin`), distinta de `StateVersion` de eventos.
 A listagem administrativa fornece esse token no campo `version`. Preserve-o como recebido, sem
-calcular o próximo. Sintaxe inválida400 antecede autobloqueio409
-`cannot_deactivate_self`; depois vêm alvo ausente404, versão obsoleta409
-`concurrency_conflict`, alvo excluído409 `user_deleted` e aplicação200. A resposta
+calcular o próximo. Sintaxe inválida 400 antecede autobloqueio 409
+`cannot_deactivate_self`; depois vêm alvo ausente 404, versão obsoleta 409
+`concurrency_conflict`, alvo excluído 409 `user_deleted` e aplicação 200. A resposta
 preserva os campos administrativos e inclui `isDeleted`. Mesmo pedir o estado atual
 com versão correta renova o token HTTP; sem mudança real não avança a versão lógica.
 Uma versão obsoleta conflita mesmo se o estado pedido já for o atual.
 
 `DELETE /api/v1/admin/users/{id}` exclui outra conta ativa ou bloqueada logicamente,
-retornando204. Mantém ID, nome/e-mail, hash, unicidade do e-mail e históricos.
+retornando 204. Mantém ID, nome/e-mail, hash, unicidade do e-mail e históricos.
 Não equivale a anonimização e não consulta dependências em outros bancos. Não há
-restauração nesta entrega. Repetição204 não escreve novamente nem avança versão;
-inexistente404, autoexclusão409 `cannot_delete_self`. Cadastro/perfil não podem
+restauração nesta entrega. Repetição 204 não escreve novamente nem avança versão;
+inexistente 404, autoexclusão 409 `cannot_delete_self`. Cadastro/perfil não podem
 reutilizar e-mail da conta excluída. Desbloquear só é permitido a conta bloqueada,
 e permite reutilizar token ainda válido depois da revalidação local.
 
@@ -308,7 +308,7 @@ Cada comando lê a linha atual sob lock transacional. DELETEs concorrentes têm 
 única transição; PATCHs com o mesmo token têm um vencedor. PATCH que perde para
 DELETE não restaura a conta. A exclusão pode seguir status/perfil que já tenham
 confirmado antes. Respostas e logs de sucesso ocorrem depois do commit. A versão
-lógica começa1 e avança só em alteração efetiva de estado compartilhado; ela não é
+lógica começa 1 e avança só em alteração efetiva de estado compartilhado; ela não é
 o token HTTP. Cada transição efetiva confirma UserStateChangedEvent na mesma transação.
 A publicação não é revogação instantânea global: Catalog/Notifications aplicam o
 estado em suas próprias projeções. A jornada da orquestração verifica a
