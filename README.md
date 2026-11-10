@@ -188,8 +188,8 @@ Não precisa que o broker esteja disponível para gravar intenções. O entregad
 API em execução as envia depois; a saída `staged` confirma intenção, não consumo.
 
 Saída JSON tem `dryRun,selected,staged,active,blocked,deleted,notFound`, sem contato,
-hash ou credencial. Exit 0 indica operação concluída;2 uso inválido;3 usuário individual
-não encontrado;1 falha segura. Comando desconhecido é rejeitado, sem iniciar API.
+hash ou credencial. Exit 0 indica operação concluída; 2 uso inválido; 3 usuário individual
+não encontrado; 1 falha segura. Comando desconhecido é rejeitado, sem iniciar API.
 A leitura usa um snapshot RepeatableRead, em páginas 100, e todas as intenções são
 confirmadas no mesmo commit final. Falha posterior desfaz também os lotes já salvos.
 Os registros Users, seus xmin e StateVersion não mudam pela reconciliação.
