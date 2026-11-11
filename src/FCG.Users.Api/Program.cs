@@ -1,0 +1,136 @@
+using System.Text.Json;
+using FCG.Users.Api.Operations;
+using FCG.Users.Api.Documentation;
+using FCG.Users.Api;
+using FCG.Users.Api.Errors;
+using FCG.Users.Api.Logging;
+using FCG.Users.Api.Security;
+using FCG.Users.Application.Common;
+using FCG.Users.Application.Identity;
+using FCG.Users.Infrastructure.Common;
+using FCG.Users.Infrastructure.Identity;
+using FCG.Users.Infrastructure.Persistence;
+using FCG.Users.Infrastructure.Messaging;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.OpenApi;
+using Microsoft.Extensions.Options;
+
+if (args is ["--healthcheck"])
+    return await ContainerProbe.RunAsync(new Uri("http://127.0.0.1:8080/health/ready"));
+
+if (args.Length > 0 && !args[0].StartsWith("-", StringComparison.Ordinal) && args[0] != "reconcile-identities")
+{
+    Console.Error.WriteLine(IdentityReconciliationOptions.Usage);
+    return 2;
+}
+IdentityReconciliationOptions? reconciliation = null;
+if (args.FirstOrDefault() == "reconcile-identities"
+    && !IdentityReconciliationOptions.TryParse(args[1..], out reconciliation))
+{
+    Console.Error.WriteLine(IdentityReconciliationOptions.Usage);
+    return 2;
+}
+var builder = WebApplication.CreateBuilder(reconciliation is null ? args : []);
+if (reconciliation is not null) builder.Logging.ClearProviders();
+var connection = builder.Configuration.GetConnectionString("Default");
+if (string.IsNullOrWhiteSpace(connection)) throw new InvalidOperationException("ConnectionStrings:Default is required for Users.");
+builder.Services.AddDbContext<UsersDbContext>(options =>
+{
+    options.UseNpgsql(connection);
+    if (!builder.Environment.IsDevelopment())
+    {
+        // These EF events include raw exceptions/stack traces. The API records safe
+        // status, exception type and traceId instead; keep detailed diagnostics local.
+        options.ConfigureWarnings(warnings => warnings.Ignore(
+            RelationalEventId.CommandError, RelationalEventId.ConnectionError,
+            CoreEventId.QueryIterationFailed, CoreEventId.SaveChangesFailed));
+    }
+});
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IdentityReconciler>();
+builder.Services.AddUsersMessaging(builder.Configuration);
+if (!builder.Environment.IsDevelopment())
+{
+    builder.Logging.AddFilter("MassTransit", LogLevel.None);
+    // Framework request logs include raw query strings. Keep bounded application audit events instead.
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.None);
+    builder.Services.AddHostedService<FCG.Users.Api.Diagnostics.RequestTraceLifetime>();
+}
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddSingleton<IPasswordHasher, AspNetCorePasswordHasher>();
+builder.Services.AddSingleton<IJwtTokenGenerator, JwtTokenGenerator>();
+builder.Services.AddOptions<AdminBootstrapOptions>().Bind(builder.Configuration.GetSection(AdminBootstrapOptions.SectionName)).ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<AdminBootstrapOptions>, AdminBootstrapOptionsValidator>();
+builder.Services.AddScoped<AdminBootstrapService>();
+builder.Services.AddHostedService<AdminBootstrapHostedService>();
+builder.Services.AddScoped<IUserAdministration, UserAdministration>();
+builder.Services.AddScoped<IAdminUserReader, AdminUserReader>();
+builder.Services.AddScoped<ListUsersHandler>();
+builder.Services.AddScoped<IUserSelfRepository, UserSelfRepository>();
+builder.Services.AddScoped<GetCurrentUserHandler>();
+builder.Services.AddScoped<UpdateCurrentUserHandler>();
+builder.Services.AddScoped<ChangeOwnPasswordHandler>();
+builder.Services.AddScoped<ChangeUserStatusHandler>();
+builder.Services.AddScoped<DeleteUserHandler>();
+builder.Services.AddScoped<RegisterUserHandler>();
+builder.Services.AddScoped<LoginUserHandler>();
+builder.Services.AddUsersAuthentication(builder.Configuration);
+builder.Services.AddControllers();
+builder.Services.AddApiProblemDetails();
+builder.Services.AddApiLogging();
+builder.Services.AddApiRateLimiting(builder.Configuration);
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo { Title = "FCG Users API", Version = "v1", Description = "Registration, authentication and account administration with RS256 access tokens." });
+    options.OperationFilter<UsersSecurityOperationFilter>();
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme { Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT" });
+});
+builder.Services.AddHealthChecks().AddCheck<UsersDatabaseHealthCheck>("users-database", tags: ["ready"]);
+var app = builder.Build();
+if (reconciliation is not null)
+{
+    try
+    {
+        await using var scope = app.Services.CreateAsyncScope();
+        var report = await scope.ServiceProvider.GetRequiredService<IdentityReconciler>()
+            .ExecuteAsync(reconciliation.UserId, reconciliation.DryRun, CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(report, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        return report.NotFound ? 3 : 0;
+    }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine("Identity reconciliation failed: " + error.GetType().Name);
+        return 1;
+    }
+    finally { await app.DisposeAsync(); }
+}
+// Validate persisted key files before opening the listener, even without an initial login.
+_ = app.Services.GetRequiredService<JwtKeyMaterial>();
+if (builder.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    await scope.ServiceProvider.GetRequiredService<UsersDbContext>().Database.MigrateAsync();
+}
+app.UseApiRequestLogging();
+app.UseExceptionHandler();
+app.UseStatusCodePages();
+app.UseRouting();
+app.UseApiRateLimiting();
+app.UseAuthentication();
+app.UseAuthorization();
+if (builder.Configuration.GetValue<bool>("Swagger:Enabled")) { app.UseSwagger(); app.UseSwaggerUI(); }
+app.MapControllers();
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResultStatusCodes = { [HealthStatus.Degraded] = 503, [HealthStatus.Unhealthy] = 503 }
+});
+app.Run();
+return 0;
+public partial class Program;
